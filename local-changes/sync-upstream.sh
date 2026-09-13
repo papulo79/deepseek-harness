@@ -126,6 +126,13 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 1
 fi
 
+# El slug del repositorio se deriva del remoto: las versiones antiguas de gh no
+# sustituyen los marcadores {owner}/{repo} de forma fiable.
+slug="$(git remote get-url origin)"
+slug="${slug#git@github.com:}"
+slug="${slug#https://github.com/}"
+slug="${slug%.git}"
+
 echo "==> Publicando $rama_sync"
 git push -u origin "$rama_sync"
 
@@ -133,7 +140,7 @@ git push -u origin "$rama_sync"
 # campo `hasPullRequests`, que GitHub retiró con los ajustes de PR de 2026, y
 # esas órdenes fallan. Los endpoints REST funcionan con cualquier versión.
 echo "==> Abriendo el PR contra $BRANCH"
-pr="$(gh api -X POST "repos/{owner}/{repo}/pulls" \
+pr="$(gh api -X POST "repos/$slug/pulls" \
   -f title="chore(local-changes): fusionar $UPSTREAM/$UPSTREAM_BRANCH ($(date +%Y-%m-%d))" \
   -f head="$rama_sync" \
   -f base="$BRANCH" \
@@ -142,8 +149,8 @@ pr="$(gh api -X POST "repos/{owner}/{repo}/pulls" \
 
 echo "==> Fusionando el PR #$pr"
 git checkout "$BRANCH"
-gh api -X PUT "repos/{owner}/{repo}/pulls/$pr/merge" -f merge_method=merge --jq .merged >/dev/null
-gh api -X DELETE "repos/{owner}/{repo}/git/refs/heads/$(printf '%s' "$rama_sync" | sed 's|/|%2F|g')" >/dev/null
+gh api -X PUT "repos/$slug/pulls/$pr/merge" -f merge_method=merge --jq .merged >/dev/null
+gh api -X DELETE "repos/$slug/git/refs/heads/$(printf '%s' "$rama_sync" | sed 's|/|%2F|g')" >/dev/null
 git pull --ff-only origin "$BRANCH"
 
 refrescar_lanzador
