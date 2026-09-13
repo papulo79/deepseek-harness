@@ -50,20 +50,25 @@ Para ver el código de upstream sin tus cambios: `git checkout master`.
 ## Actualizar desde upstream
 
 ```sh
-./local-changes/sync-upstream.sh          # descarga, rebasa y regenera la serie
-./local-changes/sync-upstream.sh --push   # además publica master y la rama en el fork
+./local-changes/sync-upstream.sh          # prepara la fusión de upstream, sin publicar
+./local-changes/sync-upstream.sh --push   # publica, abre el PR y lo fusiona
 ```
 
-Es la única vía de actualización: el botón *Sync fork* descartaría tus commits, y
-el rebase de este script solo los recoloca. `--ayuda` lista sus opciones.
+Es la única vía de actualización: el botón *Sync fork* descartaría tus commits.
+Como la rama de trabajo solo acepta cambios por pull request, la actualización
+entra **fusionando** upstream dentro de una rama de sincronización, no rebasando:
+un rebase reescribe commits y ningún PR puede publicar historia reescrita.
+`--ayuda` lista sus opciones.
 
 El script hace, en este orden:
 
 1. se niega a ejecutarse si hay cambios sin commitear;
 2. `git fetch upstream --prune`;
-3. deja `master` en `upstream/master`;
-4. rebasa `local/custom` sobre `upstream/master`;
-5. regenera `local-changes/patches/` y lo commitea si cambió.
+3. deja `master` en `upstream/master` (y lo publica, si es `--push`);
+4. crea una rama `sync/upstream-<fecha>` desde `local/custom` y **fusiona**
+   `upstream/master` en ella;
+5. regenera `local-changes/patches/` dentro de esa rama;
+6. con `--push`, publica la rama, abre el PR contra `local/custom` y lo fusiona.
 
 Si hay conflictos, el rebase queda a medias y el script sale con error:
 resuélvelos, haz `git add` y `git rebase --continue`, y vuelve a lanzar el
@@ -99,15 +104,20 @@ parche falla, `git am` deja el conflicto en el árbol: resuélvelo, `git add` y
 
 ## Añadir un cambio nuevo
 
+La rama de trabajo **no acepta pushes directos**: un ruleset exige que todo
+cambio entre por pull request. El ciclo es el de siempre, más el PR:
+
 ```sh
-git checkout local/custom
-# ... editas ...
-git add -A && git commit -m "feat(area): descripción"
-./local-changes/sync-upstream.sh --push
+git switch -c mejora/mi-cambio local/custom
+# ... editas y commiteas ...
+git push -u origin mejora/mi-cambio
+gh pr create --base local/custom --fill
+gh pr merge --merge --delete-branch      # no hay revisiones que esperar: 0 obligatorias
+git switch local/custom && git pull --ff-only
 ```
 
-El último paso regenera `local-changes/patches/` con el commit nuevo, lo
-commitea y publica la rama. No hace falta tocar los parches a mano.
+Un push directo a `local/custom` falla con `GH013: Changes must be made through a
+pull request`, así que la regla no depende de tu memoria.
 
 ## Relación con la carpeta externa `deepseek-harness-web/`
 
@@ -178,6 +188,9 @@ Aunque el repositorio es público, **la escritura es solo tuya**:
   leer y comentar, pero solo un colaborador abre PRs.
 - El ruleset «proteger las ramas del fork» aplica la regla `deletion` a
   `local/custom` y `master`, así que GitHub rechaza borrarlas.
+- El ruleset «la rama de trabajo solo por PR» aplica `pull_request` (0
+  revisiones obligatorias) y `non_fast_forward` a `local/custom`: los pushes
+  directos y los force-push se rechazan, y todo cambio entra por pull request.
 
 Lo que un repositorio público no permite evitar es que otros lo lean o lo
 bifurquen. Si algún día necesitas privacidad, hay que pasar a un espejo —un
