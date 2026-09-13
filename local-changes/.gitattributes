@@ -1,0 +1,4 @@
+# Las líneas de contexto de un diff unificado empiezan por un espacio que es
+# formato, no contenido: sin esta excepción `git diff --check` marca como error
+# de espacios cada línea vacía de los parches versionados en patches/.
+patches/*.patch -whitespace
