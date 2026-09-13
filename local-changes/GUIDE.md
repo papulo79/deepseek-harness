@@ -111,18 +111,33 @@ parches sobre `master`, que es la única vía. Prefiere la serie versionada del
 repositorio sobre la copia suelta y la aplica **entera**, no solo el primer
 parche.
 
-Para instalarlo:
+## Instalar el lanzador
+
+El lanzador **ya está en el repositorio**: [`arrancar-web.sh`](arrancar-web.sh) es
+la fuente de verdad. Lo que vive fuera es la *instalación*, y conviene que sea
+así: `local-changes/` solo existe en `local/custom`, de modo que una copia dentro
+del repositorio desaparece en cuanto el árbol queda en `master` —justo cuando
+más falta hace para volver a la rama.
+
+Instálalo, o actualízalo tras cambiarlo, con:
 
 ```sh
 cp local-changes/arrancar-web.sh ~/Desarrollo/deepseek-harness-web/arrancar-web.sh
 ```
 
-Mientras no lo copies, tu lanzador sigue siendo el antiguo y funciona **solo si
-el repositorio está en `local/custom`**.
+También puedes ejecutarlo directamente desde el repositorio, sin instalar nada:
 
-Un detalle esperado: la huella de compilación del lanzador incluye el commit y
-el estado de git, así que el primer arranque tras cualquier commit reconstruye
-una vez (`pnpm run build`) aunque el código sea idéntico.
+```sh
+./local-changes/arrancar-web.sh
+```
+
+En ese caso la huella de compilación vive en `$REPO/.artifacts/`, que git
+ignora, así que no ensucia el árbol. `DSH_REPO` o `--repo` apuntan a otro
+checkout, y `DSH_SELLO` a otra huella.
+
+Un detalle esperado: la huella incluye el commit y el estado de git, así que el
+primer arranque tras cualquier commit reconstruye una vez (`pnpm run build`)
+aunque el código sea idéntico.
 
 ## Reglas para convivir con los gates del repositorio
 

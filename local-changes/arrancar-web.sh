@@ -17,7 +17,6 @@ set -euo pipefail
 
 DIR_SCRIPT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO="${DSH_REPO:-/home/reverendo/Desarrollo/deepseek-harness}"
-SELLO="${DSH_SELLO:-$DIR_SCRIPT/.build-stamp}"
 PNPM="${PNPM:-pnpm}"
 
 HOST="0.0.0.0"
@@ -76,6 +75,11 @@ if [ ! -d "$REPO/.git" ]; then
   error "no encuentro un repositorio git en $REPO (usa --repo o DSH_REPO)"
   exit 1
 fi
+
+# La huella de la última compilación vive en el árbol ignorado del repositorio,
+# no junto al script: así la copia versionada puede ejecutarse en su sitio sin
+# ensuciar el árbol, y la copia instalada fuera comparte el mismo estado.
+SELLO="${DSH_SELLO:-$REPO/.artifacts/arrancar-web.stamp}"
 
 STARTUP="$REPO/packages/bundle/web-app/src/startup.ts"
 AUTH="$REPO/packages/client/connection/src/browser-auth.ts"
@@ -222,6 +226,7 @@ if [ "$HACER_BUILD" = 1 ]; then
       (cd "$REPO" && "$PNPM" install)
     fi
     (cd "$REPO" && "$PNPM" run build)
+    mkdir -p "$(dirname "$SELLO")"
     printf '%s\n' "$actual" > "$SELLO"
     log "compilación completada"
   else
