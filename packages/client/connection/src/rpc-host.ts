@@ -110,15 +110,6 @@ export class HostConnectionService extends Service implements HostConnectionHand
     return this.browserAuth.pairing
   }
 
-  /** Exchange one submitted LAN pairing PIN for the browser-session cookie. */
-  authorizePairing(
-    request: ConnectionIndexRequest,
-    pin: string,
-    response: ConnectionIndexResponse,
-  ): boolean {
-    return this.browserAuth.authorizePairing(request, pin, response)
-  }
-
   /** Add this process's launch token to the clean application URL. */
   authenticatedUrl(baseUrl: string): string {
     return this.browserAuth.authenticatedUrl(baseUrl)

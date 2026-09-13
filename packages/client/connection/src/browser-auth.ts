@@ -350,6 +350,10 @@ export class BrowserAuth {
    * peer address locked by earlier failures receives 429 without a PIN check;
    * a wrong PIN extends that peer's failure streak; the correct PIN clears the
    * streak and mints the same authority-bound cookie as the token exchange.
+   * The caller MUST apply the Host/Origin trust fence first: this method admits
+   * any authority the policy names, and the fence is what stops a cross-site
+   * page from spending a peer's attempt budget. The registered `/pair` route is
+   * the only caller.
    * @param req - pairing request facts including the TCP peer address.
    * @param pin - submitted six-digit PIN.
    * @param res - response this exchange owns for every outcome.

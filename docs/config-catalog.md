@@ -403,7 +403,7 @@ export interface ConnectionPairingConfig {
 }
 ```
 
-Source: [`packages/client/connection/src/index.ts:116`](../packages/client/connection/src/index.ts)
+Source: [`packages/client/connection/src/index.ts:118`](../packages/client/connection/src/index.ts)
 
 <a id="deepseek-aidsh-client-hmr"></a>
 

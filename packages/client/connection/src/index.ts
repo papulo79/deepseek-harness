@@ -11,7 +11,6 @@ import { bridge, DEFAULT_MAX_REQUEST_BODY_BYTES } from './http-bridge.ts'
 import { assertTrustedAuthority, isTrustedApiRequest } from './api-request-trust.ts'
 import { BrowserAuth, type BrowserPairingPolicy } from './browser-auth.ts'
 import { HostConnectionService } from './rpc-host.ts'
-import type { HostConnectionHandle } from './rpc.ts'
 import { ConnectionRecoveryConfigSchema, resolveConnectionConfig, type ConnectionRecoveryConfig } from './recovery-config.ts'
 
 export type {
@@ -58,6 +57,9 @@ const PAIRING_PATH = '/pair'
 
 /** Maximum accepted pairing form body; the form carries one six-digit field. */
 const MAX_PAIRING_BODY_BYTES = 1024
+
+/** Media type the pairing form submits; any other type is refused before the body is read. */
+const PAIRING_MEDIA_TYPE = 'application/x-www-form-urlencoded'
 
 /** Failed PIN submissions from one peer address before that address is locked out. */
 const DEFAULT_MAX_PAIRING_ATTEMPTS = 5
@@ -167,11 +169,8 @@ export async function apply(ctx: Context, config?: ConnectionConfig): Promise<vo
     for (const entry of pairing.authorities) assertTrustedAuthority(entry)
   }
   assertImageBodyCapacity(ctx, maxRequestBodyBytes)
-  const connection = new HostConnectionService(
-    ctx,
-    trustedHosts,
-    await BrowserAuth.create(ctx.root, ctx.credentials, cookieMaxAgeDays, pairing),
-  )
+  const browserAuth = await BrowserAuth.create(ctx.root, ctx.credentials, cookieMaxAgeDays, pairing)
+  const connection = new HostConnectionService(ctx, trustedHosts, browserAuth)
   ctx.inject(['webServer'], (webCtx) => {
     assertImageBodyCapacity(webCtx, maxRequestBodyBytes)
     webCtx.on('webserver/index-inject', (table) => {
@@ -196,7 +195,7 @@ export async function apply(ctx: Context, config?: ConnectionConfig): Promise<vo
       const pairingRoute: WebRoute = {
         kind: 'exact',
         path: PAIRING_PATH,
-        handler: (req, res) => handlePairingSubmission(connection, trustedHosts, req, res),
+        handler: (req, res) => handlePairingSubmission(browserAuth, trustedHosts, req, res),
       }
       webCtx.effect(
         () => webCtx.webServer.register(pairingRoute),
@@ -210,12 +209,18 @@ export async function apply(ctx: Context, config?: ConnectionConfig): Promise<vo
 }
 
 /**
- * Serve one `/pair` submission: trust fence, method and body-size limits, form
- * parse, then the PIN exchange. This route owns every response, so the
- * frontend-static fallback keeps serving only GET and HEAD.
+ * Serve one `/pair` submission: trust fence, method, media type and body-size
+ * limits, form parse, then the PIN exchange. This route is the exchange's only
+ * caller and owns every response, so the frontend-static fallback keeps serving
+ * only GET and HEAD.
+ * @param browserAuth - pairing owner; the fence below is what stops a
+ * cross-site page from spending a peer's attempt budget.
+ * @param trustedHosts - authorities the `/api` fence accepts.
+ * @param req - pairing request.
+ * @param res - response this route owns for every outcome.
  */
 async function handlePairingSubmission(
-  connection: HostConnectionHandle,
+  browserAuth: BrowserAuth,
   trustedHosts: readonly string[],
   req: IncomingMessage,
   res: ServerResponse,
@@ -227,6 +232,12 @@ async function handlePairingSubmission(
   }
   if (req.method !== 'POST') {
     res.writeHead(405, { 'cache-control': 'no-store' })
+    res.end()
+    return
+  }
+  const mediaType = req.headers['content-type']?.split(';', 1)[0]?.trim().toLowerCase()
+  if (mediaType !== PAIRING_MEDIA_TYPE) {
+    res.writeHead(415, { 'cache-control': 'no-store' })
     res.end()
     return
   }
@@ -244,7 +255,7 @@ async function handlePairingSubmission(
     res.end()
     return
   }
-  connection.authorizePairing({
+  browserAuth.authorizePairing({
     method: req.method,
     url: req.url,
     headers: req.headers,

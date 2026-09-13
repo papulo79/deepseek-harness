@@ -206,19 +206,6 @@ export interface HostConnectionHandle {
   readonly pairing: BrowserPairing | undefined
 
   /**
-   * Exchange one submitted LAN pairing PIN for the browser-session cookie.
-   * @param request - pairing request facts including the TCP peer address.
-   * @param pin - submitted six-digit PIN.
-   * @param response - response the exchange owns for every outcome.
-   * @returns false, because the exchange always writes the response.
-   */
-  authorizePairing(
-    request: ConnectionIndexRequest,
-    pin: string,
-    response: ConnectionIndexResponse,
-  ): boolean
-
-  /**
    * Add the fresh process token to an ordinary Web application URL.
    * @param baseUrl - clean canonical browser origin.
    * @returns root URL accepted by {@link authorizeIndex} for initial login.

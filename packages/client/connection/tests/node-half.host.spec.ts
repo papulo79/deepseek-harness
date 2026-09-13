@@ -524,6 +524,13 @@ describe('connection node half', () => {
       await route.handler(fakeRequest(trusted, '/pair'), wrongMethod.response)
       expect(wrongMethod.state.status).toBe(405)
 
+      const wrongMediaType = fakeResponse()
+      await route.handler(
+        fakePairPost({ ...trusted, 'content-type': 'text/plain' }, `pin=${pin}`),
+        wrongMediaType.response,
+      )
+      expect(wrongMediaType.state).toMatchObject({ status: 415, headers: { 'cache-control': 'no-store' } })
+
       const declaredOversize = fakeResponse()
       await route.handler(
         fakePairPost({ ...trusted, 'content-length': '2048' }, `pin=${pin}`),
@@ -555,10 +562,70 @@ describe('connection node half', () => {
       const paired = fakeResponse()
       await route.handler(fakePairPost(trusted, `pin=${pin}`), paired.response)
       expect(paired.state).toMatchObject({ status: 303, headers: { location: '/' } })
-      expect(paired.state.headers?.['set-cookie']).toMatch(/^dsh-auth-/u)
+      expect(paired.state.headers?.['set-cookie'])
+        .toMatch(/^dsh-auth-[A-Za-z0-9_-]+=v1\.[^;]+; Max-Age=\d+; Path=\/; Expires=.*; HttpOnly; SameSite=Strict$/u)
+      expect(paired.state.headers?.['set-cookie']).not.toContain('Secure')
     } finally {
       await dispose()
     }
+  })
+
+  it('locks a peer address out on the sixth submission under the shipped defaults', async () => {
+    const { routes, connection, dispose } = await mounted({
+      trustedHosts: ['192.168.1.5'],
+      pairing: { authorities: ['192.168.1.5'] },
+    })
+    try {
+      const route = routes.find(candidate => candidate.path === '/pair')!
+      const pin = connection.pairing?.pin
+      if (pin === undefined) throw new Error('pairing PIN was not published')
+      const wrong = pin === '000000' ? '111111' : '000000'
+      const submit = async (): Promise<number | undefined> => {
+        const denied = fakeResponse()
+        await route.handler(fakePairPost({ host: '192.168.1.5' }, `pin=${wrong}`), denied.response)
+        return denied.state.status
+      }
+      // Pins the default failure count: five rejected submissions, then the
+      // lockout answer. The window itself is not observable without fake clocks.
+      for (const attempt of [1, 2, 3, 4, 5]) {
+        expect([attempt, await submit()]).toEqual([attempt, 401])
+      }
+      expect(await submit()).toBe(429)
+    } finally {
+      await dispose()
+    }
+  })
+
+  it('rejects an empty or non-numeric PIN and still admits the correct one', async () => {
+    const { routes, connection, dispose } = await mounted({
+      trustedHosts: ['192.168.1.5'],
+      pairing: { authorities: ['192.168.1.5'], maxFailedAttempts: 100, lockoutMilliseconds: 60_000 },
+    })
+    try {
+      const route = routes.find(candidate => candidate.path === '/pair')!
+      const pin = connection.pairing?.pin
+      if (pin === undefined) throw new Error('pairing PIN was not published')
+      for (const body of ['pin=', 'pin=abcdef', 'pin=12']) {
+        const rejected = fakeResponse()
+        await route.handler(fakePairPost({ host: '192.168.1.5' }, body), rejected.response)
+        expect([body, rejected.state.status]).toEqual([body, 401])
+      }
+      const paired = fakeResponse()
+      await route.handler(fakePairPost({ host: '192.168.1.5' }, `pin=${pin}`), paired.response)
+      expect(paired.state).toMatchObject({ status: 303, headers: { location: '/' } })
+    } finally {
+      await dispose()
+    }
+  })
+
+  it('removes the LAN pairing route with the fiber', async () => {
+    const { routes, dispose } = await mounted({
+      trustedHosts: ['192.168.1.5'],
+      pairing: { authorities: ['192.168.1.5'] },
+    })
+    expect(routes.map(route => route.path)).toEqual([API_PATH, '/pair'])
+    await dispose()
+    expect(routes).toHaveLength(0)
   })
 
   it('defaults the pairing policy, disables it when empty, and rejects a malformed authority', async () => {
