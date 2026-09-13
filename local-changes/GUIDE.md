@@ -111,13 +111,20 @@ cambio entre por pull request. El ciclo es el de siempre, más el PR:
 git switch -c mejora/mi-cambio local/custom
 # ... editas y commiteas ...
 git push -u origin mejora/mi-cambio
-gh pr create --base local/custom --fill
-gh pr merge --merge --delete-branch      # no hay revisiones que esperar: 0 obligatorias
+gh api -X POST repos/{owner}/{repo}/pulls \
+  -f title="mejora: lo que sea" -f head=mejora/mi-cambio -f base=local/custom
+gh api -X PUT repos/{owner}/{repo}/pulls/<n>/merge -f merge_method=merge
+gh api -X DELETE repos/{owner}/{repo}/git/refs/heads/mejora%2Fmi-cambio
 git switch local/custom && git pull --ff-only
 ```
 
 Un push directo a `local/custom` falla con `GH013: Changes must be made through a
 pull request`, así que la regla no depende de tu memoria.
+
+`gh pr create` y `gh pr merge` hacen lo mismo en una versión reciente de la CLI.
+La 2.45 instalada falla —«papulo79 does not have the correct permissions»— porque
+consulta el campo GraphQL `hasPullRequests`, que GitHub retiró con los ajustes de
+PR de 2026; por eso aquí se usan los endpoints REST.
 
 ## Relación con la carpeta externa `deepseek-harness-web/`
 
