@@ -1,11 +1,30 @@
 /** Behavior of the /api browser-trust fence (rebinding + cross-site defense). */
 
 import { describe, expect, it } from 'vitest'
-import { assertTrustedAuthority, isTrustedApiRequest } from '../src/api-request-trust.ts'
+import { assertTrustedAuthority, isReachablePairingAuthority, isTrustedApiRequest } from '../src/api-request-trust.ts'
 
 function request(headers: Record<string, string | undefined>): { headers: Record<string, string | undefined> } {
   return { headers }
 }
+
+describe('isReachablePairingAuthority', () => {
+  it('admits a pairing authority the fence reaches on some port', () => {
+    expect(isReachablePairingAuthority('192.168.1.5', ['192.168.1.5'])).toBe(true)
+    expect(isReachablePairingAuthority('192.168.1.5', ['192.168.1.5:3081'])).toBe(true)
+    expect(isReachablePairingAuthority('192.168.1.5:3081', ['192.168.1.5'])).toBe(true)
+    expect(isReachablePairingAuthority('192.168.1.5:3081', ['192.168.1.5:3081'])).toBe(true)
+    // Loopback is admitted by the fence without a trustedHosts entry.
+    expect(isReachablePairingAuthority('localhost', ['harness.internal'])).toBe(true)
+  })
+
+  it('refuses a pairing authority no fenced request can match', () => {
+    expect(isReachablePairingAuthority('192.168.1.5', ['10.0.0.7'])).toBe(false)
+    expect(isReachablePairingAuthority('192.168.1.5:3081', ['192.168.1.5:3082'])).toBe(false)
+    expect(isReachablePairingAuthority('192.168.1.5', [])).toBe(false)
+    expect(isReachablePairingAuthority('192.168.1.5', [''])).toBe(false)
+    expect(isReachablePairingAuthority('', ['192.168.1.5'])).toBe(false)
+  })
+})
 
 describe('isTrustedApiRequest', () => {
   it('holds markerless requests to the same Host fence — a plain-HTTP browser read carries no markers', () => {

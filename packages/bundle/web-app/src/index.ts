@@ -69,6 +69,13 @@ export const Config: z<Config> = z.object({
 export interface WebRuntimeValues {
   /** LAN IPv4 literals sampled once when the server binds all interfaces. */
   lanAddresses: string[]
+  /**
+   * Subset of `lanAddresses` a phone on the same private network reaches. Only
+   * these become pairing authorities and get announced, so an interface holding
+   * a globally routable address never answers an Internet client with the PIN
+   * form.
+   */
+  pairingAddresses: string[]
   /** LAN literals followed by explicit invocation authorities. */
   trustedHosts: string[]
 }
@@ -129,7 +136,27 @@ export function resolveLanTrust(bindHost: string, extra: readonly string[]): Web
       .filter((iface): iface is NonNullable<typeof iface> => iface !== undefined && iface.family === 'IPv4' && !iface.internal)
       .map(iface => iface.address)
     : []
-  return { lanAddresses, trustedHosts: [...lanAddresses, ...extra] }
+  return {
+    lanAddresses,
+    pairingAddresses: lanAddresses.filter(isPrivateIPv4),
+    trustedHosts: [...lanAddresses, ...extra],
+  }
+}
+
+/**
+ * Whether an IPv4 literal belongs to a range a phone on the same local network
+ * reaches: RFC1918 private space, CGNAT (Tailscale and similar overlays), or
+ * link-local. A globally routable address is excluded, so an all-interface bind
+ * on a host with a public address exposes no pairing endpoint to the Internet.
+ * @param address - dotted-quad IPv4 literal.
+ * @returns true for a private, link-local, or CGNAT literal.
+ */
+function isPrivateIPv4(address: string): boolean {
+  return /^10\./u.test(address)
+    || /^172\.(1[6-9]|2\d|3[01])\./u.test(address)
+    || /^192\.168\./u.test(address)
+    || /^169\.254\./u.test(address)
+    || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./u.test(address)
 }
 
 /** Model-visible orientation and acceptance boundary for sessions created through `dsh web`. */
@@ -261,8 +288,8 @@ export function apply(ctx: Context, config: Config): void {
         if (ANNOUNCED_ROOTS.has(connectionCtx.root)) return
         const webUrl = localWebUrl(connectionCtx)
         const authenticatedUrl = connectionCtx.connection.authenticatedUrl(webUrl)
-        // Reuse the exact LAN snapshot provided to the /api trust fence.
-        const lanCandidate = runtime.lanAddresses[0]
+        // Only a private LAN literal pairs; the clean URL carries no process token.
+        const lanCandidate = runtime.pairingAddresses[0]
         const port = connectionCtx.webServer.port
         const pairing = connectionCtx.connection.pairing
         // The clean LAN URL carries no process token; the PIN admits the phone.

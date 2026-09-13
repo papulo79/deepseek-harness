@@ -8,7 +8,7 @@ import type {} from '@deepseek-ai/dsh-credentials'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { API_PATH } from './api-path.ts'
 import { bridge, DEFAULT_MAX_REQUEST_BODY_BYTES } from './http-bridge.ts'
-import { assertTrustedAuthority, isTrustedApiRequest } from './api-request-trust.ts'
+import { assertTrustedAuthority, isReachablePairingAuthority, isTrustedApiRequest } from './api-request-trust.ts'
 import { BrowserAuth, type BrowserPairingPolicy } from './browser-auth.ts'
 import { HostConnectionService } from './rpc-host.ts'
 import { ConnectionRecoveryConfigSchema, resolveConnectionConfig, type ConnectionRecoveryConfig } from './recovery-config.ts'
@@ -177,7 +177,17 @@ export async function apply(ctx: Context, config?: ConnectionConfig): Promise<vo
   // silently authorizing its hostname prefix at request time.
   for (const entry of trustedHosts) assertTrustedAuthority(entry)
   if (pairing !== undefined) {
-    for (const entry of pairing.authorities) assertTrustedAuthority(entry)
+    for (const entry of pairing.authorities) {
+      assertTrustedAuthority(entry)
+      // Config boundary: a pairing authority the fence always refuses would
+      // serve a form whose every submission is a 403.
+      if (!isReachablePairingAuthority(entry, trustedHosts)) {
+        throw new Error(
+          `client-connection: pairing authority ${JSON.stringify(entry)} is outside trustedHosts, `
+          + 'so the fence would refuse every pairing submission',
+        )
+      }
+    }
   }
   assertImageBodyCapacity(ctx, maxRequestBodyBytes)
   const browserAuth = await BrowserAuth.create(ctx.root, ctx.credentials, cookieMaxAgeDays, pairing)
@@ -203,10 +213,19 @@ export async function apply(ctx: Context, config?: ConnectionConfig): Promise<vo
     }
     webCtx.effect(() => webCtx.webServer.register(route), 'client-connection: /api route')
     if (pairing !== undefined) {
+      let exhaustedReported = false
       const pairingRoute: WebRoute = {
         kind: 'exact',
         path: PAIRING_PATH,
-        handler: (req, res) => handlePairingSubmission(browserAuth, trustedHosts, req, res),
+        handler: (req, res) => {
+          // The operator reads this console, not the phone that is being
+          // refused, so an exhausted budget is reported once here.
+          if (!exhaustedReported && browserAuth.pairingBudgetExhausted) {
+            exhaustedReported = true
+            webCtx.logger.warn('client-connection: LAN pairing stopped for this process; restart dsh web to mint a new PIN')
+          }
+          return handlePairingSubmission(browserAuth, trustedHosts, req, res)
+        },
       }
       webCtx.effect(
         () => webCtx.webServer.register(pairingRoute),

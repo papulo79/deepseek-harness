@@ -4,6 +4,7 @@ import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 
 import { credentialKey } from '@deepseek-ai/dsh-credentials'
 import type { CredentialProvider, CredentialRecord } from '@deepseek-ai/dsh-credentials'
 import { isConfiguredAuthority } from './api-request-trust.ts'
+import { requestHeader } from './request-headers.ts'
 import type {
   BrowserPairing,
   ConnectionIndexRequest,
@@ -108,18 +109,9 @@ function processPairingBudget(owner: object): { failures: number } {
   return created
 }
 
-function header(
-  headers: ConnectionTrustRequest['headers'],
-  name: string,
-): string | undefined {
-  if (headers instanceof Headers) return headers.get(name) ?? undefined
-  const value = headers[name]
-  return typeof value === 'string' ? value : undefined
-}
-
 /** Canonical request authority used as the cookie name and signed audience. */
 function requestAuthority(headers: ConnectionTrustRequest['headers']): string | undefined {
-  const host = header(headers, 'host')
+  const host = requestHeader(headers, 'host')
   if (host === undefined) return undefined
   try {
     return new URL(`http://${host}`).host
@@ -310,6 +302,16 @@ export class BrowserAuth {
   }
 
   /**
+   * Whether the process-wide pairing budget is spent, so every further
+   * submission answers 429 until the process restarts. The composing runtime
+   * reads this to report the exhausted state once on its own console.
+   */
+  get pairingBudgetExhausted(): boolean {
+    const pairing = this.pairingState
+    return pairing !== undefined && pairing.budget.failures >= pairing.policy.maxTotalFailedAttempts
+  }
+
+  /**
    * Add this process's launch token to the ordinary application root URL.
    * @param baseUrl - canonical browser origin without credentials.
    * @returns root URL carrying the process token as its sole authentication input.
@@ -430,7 +432,7 @@ export class BrowserAuth {
    */
   isAuthenticated(request: ConnectionTrustRequest): boolean {
     const authority = requestAuthority(request.headers)
-    const rawCookie = header(request.headers, 'cookie')
+    const rawCookie = requestHeader(request.headers, 'cookie')
     if (authority === undefined || rawCookie === undefined) return false
     const value = cookieValue(rawCookie, cookieName(authority))
     if (value === undefined) return false
@@ -476,6 +478,8 @@ export class BrowserAuth {
     res.writeHead(200, {
       'cache-control': 'no-store',
       'content-type': 'text/html; charset=utf-8',
+      'referrer-policy': 'no-referrer',
+      'x-frame-options': 'DENY',
     })
     res.end(PAIRING_PAGE)
   }

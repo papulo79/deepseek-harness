@@ -89,7 +89,7 @@ URL 行与浏览器交接都是就绪信号：监督方一观察到该行就发�
 
 ### LAN 信任采样
 
-`resolveLanTrust` 在启动时只采样一次网络：loopback 绑定（`127.0.0.1`）不派生任何 LAN 地址，绑定所有网卡则会加入每个非 internal IPv4 字面量。派生字面量加上显式的 `--trusted-host` 权威标识组成 `/api` 浏览器信任栅栏，并启用 Connection 的配对 authority；打印的 LAN URL 始终与该栅栏一致。
+`resolveLanTrust` 在启动时只采样一次网络：loopback 绑定（`127.0.0.1`）不派生任何 LAN 地址，绑定所有网卡则会加入每个非 internal IPv4 字面量。派生字面量加上显式的 `--trusted-host` 权威标识组成 `/api` 浏览器信任栅栏；其中只有 RFC1918、链路本地与 CGNAT 子集会成为配对 authority 并被打印，因此持有全局可路由地址的网卡绝不会向互联网客户端返回配对表单。打印的 LAN URL 始终与该栅栏一致。
 
 ### 源码地图
 

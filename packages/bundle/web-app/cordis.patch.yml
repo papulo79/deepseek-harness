@@ -186,10 +186,11 @@
         # A deployment adding authorities keeps this expression and concatenates
         # its literals, for example: ['app.internal', ...ctx.webRuntime.trustedHosts].
         trustedHosts: !!js ctx.webRuntime.trustedHosts
-        # Unauthenticated browsers on a discovered LAN literal receive the PIN
-        # form; a loopback bind derives no literal and leaves /pair unmounted.
+        # Unauthenticated browsers on a discovered private LAN literal receive
+        # the PIN form; a loopback bind, or an interface whose only address is
+        # globally routable, derives none and leaves /pair unmounted.
         pairing:
-          authorities: !!js ctx.webRuntime.lanAddresses
+          authorities: !!js ctx.webRuntime.pairingAddresses
 
     # Raw Blob and ReadableStream uploads run independently of Connection's
     # RPC and generation service.

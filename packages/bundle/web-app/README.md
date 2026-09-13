@@ -89,7 +89,7 @@ The URL line and browser handoff are readiness signals: supervisors RPC as soon 
 
 ### LAN trust sampling
 
-`resolveLanTrust` samples the network once at boot: a loopback bind (`127.0.0.1`) derives no LAN addresses, while an all-interfaces bind adds every non-internal IPv4 literal. The derived literals plus the explicit `--trusted-host` authorities form the `/api` browser-trust fence and enable the Connection pairing authorities, and the printed LAN URL always matches that fence.
+`resolveLanTrust` samples the network once at boot: a loopback bind (`127.0.0.1`) derives no LAN addresses, while an all-interfaces bind adds every non-internal IPv4 literal. The derived literals plus the explicit `--trusted-host` authorities form the `/api` browser-trust fence; only the RFC1918, link-local, and CGNAT subset becomes pairing authorities and gets announced, so an interface holding a globally routable address never answers an Internet client with the pairing form. The printed LAN URL always matches that fence.
 
 ### Source map
 

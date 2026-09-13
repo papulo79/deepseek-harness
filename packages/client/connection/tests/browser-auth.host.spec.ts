@@ -280,7 +280,12 @@ describe('BrowserAuth', () => {
     expect(auth.authorizeIndex(request('/', LAN_AUTHORITY, { peerAddress: LAN_PEER }), page.value)).toBe(false)
     expect(page.state).toMatchObject({
       status: 200,
-      headers: { 'cache-control': 'no-store', 'content-type': 'text/html; charset=utf-8' },
+      headers: {
+        'cache-control': 'no-store',
+        'content-type': 'text/html; charset=utf-8',
+        'referrer-policy': 'no-referrer',
+        'x-frame-options': 'DENY',
+      },
     })
     expect(page.state.body).toContain('<form method="post" action="/pair">')
     expect(page.state.body).toContain('name="pin"')

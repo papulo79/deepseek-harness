@@ -661,8 +661,8 @@ describe('connection node half', () => {
     expect(routes).toHaveLength(0)
   })
 
-  it('defaults the pairing policy, disables it when empty, and rejects a malformed authority', async () => {
-    const defaults = await mounted({ pairing: { authorities: ['192.168.1.5'] } })
+  it('defaults the pairing policy, disables it when empty, and rejects a malformed or unfenced authority', async () => {
+    const defaults = await mounted({ trustedHosts: ['192.168.1.5'], pairing: { authorities: ['192.168.1.5'] } })
     expect(defaults.routes.map(route => route.path)).toEqual([API_PATH, '/pair'])
     expect(defaults.connection.pairing?.pin).toMatch(/^\d{6}$/u)
     await defaults.dispose()
@@ -678,6 +678,15 @@ describe('connection node half', () => {
     await expect(apply(ctx, { pairing: { authorities: ['harness.internal/path'] } }))
       .rejects.toThrow(/not a bare host\[:port\] authority/)
     expect(ctx.get('connection')).toBeUndefined()
+
+    const unfenced = new Context()
+    provideBrowserCredentials(unfenced)
+    unfenced.provide('webServer', fakeHttpServer([], []) as WebServer)
+    await expect(apply(unfenced, {
+      trustedHosts: ['192.168.1.5'],
+      pairing: { authorities: ['10.0.0.9'] },
+    })).rejects.toThrow(/is outside trustedHosts/)
+    expect(unfenced.get('connection')).toBeUndefined()
   })
 })
 

@@ -14,13 +14,8 @@
  */
 
 import { isLoopbackHostname } from './loopback-hostname.ts'
+import { requestHeader } from './request-headers.ts'
 import type { ConnectionTrustRequest } from './rpc.ts'
-
-function header(headers: ConnectionTrustRequest['headers'], name: string): string | undefined {
-  if (headers instanceof Headers) return headers.get(name) ?? undefined
-  const value = headers[name]
-  return typeof value === 'string' ? value : undefined
-}
 
 /** Normalized URL of a Host-header authority (hostname lowercased, default port stripped, IPv6 bracketed), or undefined when unparsable. */
 function parseAuthority(authority: string): URL | undefined {
@@ -96,6 +91,29 @@ export function isConfiguredAuthority(authority: string, trustedHosts: readonly 
 }
 
 /**
+ * Whether a `pairing.authorities` entry can ever satisfy the fence. A request
+ * matches a port-less entry on any port, so the entry is reachable when it is
+ * loopback or shares its hostname with a `trustedHosts` entry whose port is
+ * open or equal. An entry the fence always refuses would serve a pairing page
+ * whose every submission is a 403, so the owning plugin rejects it at load.
+ * @param entry - configured pairing authority (`host` or `host:port`).
+ * @param trustedHosts - configured fence authorities.
+ * @returns true when both admit one common request authority.
+ */
+export function isReachablePairingAuthority(entry: string, trustedHosts: readonly string[]): boolean {
+  const entryUrl = parseAuthority(entry)
+  if (entryUrl === undefined) return false
+  if (isLoopbackHostname(entryUrl.hostname)) return true
+  const entryPort = canonicalAuthority(entry, entryUrl) === entryUrl.hostname ? undefined : entryUrl.port
+  return trustedHosts.some((trusted) => {
+    const trustedUrl = parseAuthority(trusted)
+    if (trustedUrl === undefined || trustedUrl.hostname !== entryUrl.hostname) return false
+    const trustedPort = canonicalAuthority(trusted, trustedUrl) === trustedUrl.hostname ? undefined : trustedUrl.port
+    return entryPort === undefined || trustedPort === undefined || entryPort === trustedPort
+  })
+}
+
+/**
  * Decide whether one /api request may reach the RPC bridge.
  * @param request - Node HTTP or Fetch request facts (headers).
  * @param trustedHosts - non-loopback authorities this deployment serves: exact `host:port`, or port-less `host` matching any port.
@@ -109,19 +127,19 @@ export function isTrustedApiRequest(request: ConnectionTrustRequest, trustedHost
   // (images and navigations) arrives with neither Origin nor
   // Fetch-Metadata, indistinguishable from curl, and its response is readable
   // by the rebound page.
-  const host = header(request.headers, 'host')
+  const host = requestHeader(request.headers, 'host')
   if (host === undefined) return false
   const hostUrl = parseAuthority(host)
   if (hostUrl === undefined) return false
   if (!isLoopbackHostname(hostUrl.hostname) && !isTrustedAuthority(hostUrl, trustedHosts)) return false
   // Cross-site fence: modern browsers label the initiator relationship on
   // every fetch; an explicit cross-site marker is refused regardless of Origin.
-  if (header(request.headers, 'sec-fetch-site') === 'cross-site') return false
+  if (requestHeader(request.headers, 'sec-fetch-site') === 'cross-site') return false
   // Origin fence: when a browser attaches an Origin it must be exactly this
   // authority (compared through the same normalization as the Host). Absent
   // Origin is fine — the Host fence above already bound the request. The
   // literal "null" (sandboxed iframes, file: pages) is an opaque origin, refused.
-  const origin = header(request.headers, 'origin')
+  const origin = requestHeader(request.headers, 'origin')
   if (origin === undefined) return true
   try {
     return new URL(origin).host === hostUrl.host

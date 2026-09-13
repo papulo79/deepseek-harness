@@ -28,6 +28,7 @@ vi.mock('node:os', async importOriginal => ({
   networkInterfaces: () => ({
     lo0: [{ family: 'IPv4', internal: true, address: '127.0.0.1' }],
     en0: [{ family: 'IPv4', internal: false, address: '192.168.1.5' }],
+    en1: [{ family: 'IPv4', internal: false, address: '203.0.113.9' }],
   }),
 }))
 
@@ -141,8 +142,9 @@ describe('web-app runtime glue', () => {
 
     expect(seat()).toBeDefined() // frontend-static claimed the fallback
     expect(ctx.get('webRuntime')).toEqual({
-      lanAddresses: ['192.168.1.5'],
-      trustedHosts: ['192.168.1.5', 'lab.internal'],
+      lanAddresses: ['192.168.1.5', '203.0.113.9'],
+      pairingAddresses: ['192.168.1.5'],
+      trustedHosts: ['192.168.1.5', '203.0.113.9', 'lab.internal'],
     })
     expect(log).toHaveBeenCalledWith('dsh web: http://127.0.0.1:4567/?token=test-token (LAN: http://192.168.1.5:4567; pairing PIN: 123456)')
     expect(log).toHaveBeenCalledWith('dsh web: opening the default browser; pass --no-open to disable')
@@ -152,6 +154,8 @@ describe('web-app runtime glue', () => {
       'dsh web: opening the default browser; pass --no-open to disable',
       'open:http://127.0.0.1:4567/?token=test-token',
     ])
+    // The routable interface is fenced but never announced as a pairing target.
+    expect(lifecycle[0]).not.toContain('203.0.113.9')
     const assembly = await ctx.systemPrompt.assemble()
     expect(assembly.sections.find(entry => entry.name === 'harness:source')?.text).toContain('DeepSeek Harness implementation checkout')
     const section = assembly.sections.find(entry => entry.name === 'app:web-surface')

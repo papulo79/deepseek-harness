@@ -12,7 +12,7 @@ Web GUI 最初只是 loopback 表层：`dsh web` 绑定 `127.0.0.1`，CLI 直接
 
 `dsh web --host 0.0.0.0` 是受支持且明确的主动选择。loopback 仍是默认值，CLI 本身不添加主机校验：解析出的值直接写入 webserver 配置项，其 schemastery `host` 字面量联合类型是唯一有效性真源，其他任何值都会让加载显式失败。服务器完成绑定后，Web 运行时只采样一次本机所有非 internal 的 IPv4 地址，把它们加入 `/api` 的 Host/Origin 栅栏，并以干净的 LAN URL 加六位 PIN 的形式打印；loopback URL 仍保留进程 token 及其原有交换流程。
 
-`dsh-client-connection` 负责配对，因为它本就负责浏览器认证。当 `config.pairing.authorities` 非空时，它为每个进程生成一个六位 PIN（由根应用上下文持有，可跨 Connection 热重载保留），并注册精确的 `POST /pair` 路由。Host 与配对 authority 匹配、对 dist 根路径发起的未认证 `GET` 会收到一个不含 PIN 的极简 HTML 表单；其他未认证的 index 请求仍得到普通的 401。该路由先应用 Host/Origin 栅栏，把请求体限制在 1024 字节，要求 `application/x-www-form-urlencoded` 请求体中恰好有一个 `pin` 字段，并使用现有的恒定时间比较进行校验。比对成功即签发与本地 token 交换相同的、签名且绑定 authority 的 cookie，因此已配对的手机与本地浏览器汇聚到同一条认证路径。同一对端地址失败五次（`maxFailedAttempts`）后，该地址会被锁定五分钟（`lockoutMilliseconds`），期间收到 429 且不校验 PIN；所有对端合计失败 `maxTotalFailedAttempts` 次（默认 50）后配对会停止，直到进程重启，从而约束轮换源地址的对端集合。
+`dsh-client-connection` 负责配对，因为它本就负责浏览器认证。当 `config.pairing.authorities` 非空时，它为每个进程生成一个六位 PIN（由根应用上下文持有，可跨 Connection 热重载保留），并注册精确的 `POST /pair` 路由。Host 与配对 authority 匹配、对 dist 根路径发起的未认证 `GET` 会收到一个不含 PIN 的极简 HTML 表单；其他未认证的 index 请求仍得到普通的 401。该路由先应用 Host/Origin 栅栏，把请求体限制在 1024 字节，要求 `application/x-www-form-urlencoded` 请求体中恰好有一个 `pin` 字段，并使用现有的恒定时间比较进行校验。比对成功即签发与本地 token 交换相同的、签名且绑定 authority 的 cookie，因此已配对的手机与本地浏览器汇聚到同一条认证路径。同一对端地址失败五次（`maxFailedAttempts`）后，该地址会被锁定五分钟（`lockoutMilliseconds`），期间收到 429 且不校验 PIN；所有对端合计失败 `maxTotalFailedAttempts` 次（默认 50）后配对会停止，直到进程重启，从而约束轮换源地址的对端集合。Web 组合只把探测到的字面量中属于私有、链路本地与 CGNAT 的子集作为配对 authority，因此持有全局可路由地址的网卡不会向互联网客户端提供配对表单。
 
 Web 组合把 `ctx.webRuntime.lanAddresses` 作为配对 authority 传入，因此只有 CLI 绑定了所有接口且至少探测到一个 LAN 地址时才存在配对。仅当 LAN URL 与 `ctx.connection.pairing` 同时存在时，Web 运行时才打印 PIN，并且绝不替换本地 token URL。
 
@@ -34,4 +34,4 @@ Web 组合把 `ctx.webRuntime.lanAddresses` 作为配对 authority 传入，因�
 
 配对不新增任何权限：有效 PIN 得到的 cookie 与本地 token 交换已签发的完全相同，无效 PIN 得到 401 或 429。PIN 只存在于内存并随进程结束而失效，因此重启会改变它，网络变化也需要重启才能重新公告。
 
-监听器仍不提供 TLS。在不可信网络中，PIN 与会话 cookie 以明文传输，因此全接口绑定是操作者明确承担的风险，而不是加固过的远程部署。对端状态是以源地址为键的无界映射；在交换式 LAN 上，对端无法廉价伪造 TCP 源地址，因此其规模上限是能到达该端口的不同对端数量。`--trusted-host` 绝不授予身份，LAN PIN 流程也不改变 [Host/Origin 栅栏](2026-07-28-api-browser-trust-boundary.zh.md)或[浏览器令牌交换](2026-08-24-browser-token-authentication.zh.md)。
+监听器仍不提供 TLS。在不可信网络中，PIN 与会话 cookie 以明文传输，因此全接口绑定是操作者明确承担的风险，而不是加固过的远程部署。对端状态是以源地址为键的映射，其规模受进程失败预算约束：每个被记录的对端都至少消耗了其中一次提交。`--trusted-host` 绝不授予身份，LAN PIN 流程也不改变 [Host/Origin 栅栏](2026-07-28-api-browser-trust-boundary.zh.md)或[浏览器令牌交换](2026-08-24-browser-token-authentication.zh.md)。
