@@ -29,8 +29,9 @@ if [ "$(git rev-list --count "$base..$BRANCH")" = 0 ]; then
 fi
 
 # local-changes/ es infraestructura del fork, no parte del cambio de producto:
-# excluirla evita que la serie se reescriba a sí misma al aplicarla.
-git format-patch --binary --no-signature --zero-commit \
+# excluirla evita que la serie se reescriba a sí misma al aplicarla. Los commits
+# de fusión tampoco entran: la serie es el cambio de producto, no el historial.
+git format-patch --binary --no-signature --zero-commit --no-merges \
   -o local-changes/patches "$base..$BRANCH" -- . ':(exclude)local-changes' >/dev/null
 
 echo "==> $(find local-changes/patches -name '*.patch' | wc -l) parche(s) en local-changes/patches"
