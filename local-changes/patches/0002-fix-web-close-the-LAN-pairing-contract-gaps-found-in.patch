@@ -1,0 +1,290 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Pablo=20De=20Andr=C3=A9s?= <pdeandres35@gmail.com>
+Date: Sun, 13 Sep 2026 15:21:23 +0200
+Subject: [PATCH 2/2] fix(web): close the LAN pairing contract gaps found in
+ review
+
+Enforce the `application/x-www-form-urlencoded` media type the README and the
+Agent Note already claimed, answering 415 before the body is read. Move the PIN
+exchange off the public `HostConnectionHandle`: the registered `/pair` route is
+its only caller and the host/origin fence that must precede it stays there, so
+the handle no longer widens with a method nothing outside the package uses.
+
+Pin the shipped pairing defaults through observable behavior, cover an empty or
+non-numeric PIN, assert the pairing cookie's full attribute chain, and prove the
+`/pair` route is removed with the fiber.
+---
+ docs/config-catalog.i18n.yaml                 |  2 +-
+ docs/config-catalog.md                        |  2 +-
+ .../client/connection/src/browser-auth.ts     |  4 ++
+ packages/client/connection/src/index.ts       | 35 ++++++----
+ packages/client/connection/src/rpc-host.ts    |  9 ---
+ packages/client/connection/src/rpc.ts         | 13 ----
+ .../connection/tests/node-half.host.spec.ts   | 69 ++++++++++++++++++-
+ 7 files changed, 97 insertions(+), 37 deletions(-)
+
+diff --git a/docs/config-catalog.i18n.yaml b/docs/config-catalog.i18n.yaml
+index 553cba58e7..7435c39b87 100644
+--- a/docs/config-catalog.i18n.yaml
++++ b/docs/config-catalog.i18n.yaml
+@@ -2,5 +2,5 @@
+ # side as of the last confirmed-consistent state. Both languages carry equal authority;
+ # after editing either side, bring the other along and re-record with:
+ #   pnpm run verify-translation-pairing --write docs/config-catalog.md
+-config-catalog.md: d2b6e568596cf41917f38e01c5a9ea7f6dd16ffb
++config-catalog.md: 34fb98a771f4631c8b8d413dc630e01ea1be4818
+ config-catalog.zh.md: 35e4dad010e1ffbc2bbb1b2667464242e8a8b0fb
+diff --git a/docs/config-catalog.md b/docs/config-catalog.md
+index d2b6e56859..34fb98a771 100644
+--- a/docs/config-catalog.md
++++ b/docs/config-catalog.md
+@@ -403,7 +403,7 @@ export interface ConnectionPairingConfig {
+ }
+ ```
+ 
+-Source: [`packages/client/connection/src/index.ts:116`](../packages/client/connection/src/index.ts)
++Source: [`packages/client/connection/src/index.ts:118`](../packages/client/connection/src/index.ts)
+ 
+ <a id="deepseek-aidsh-client-hmr"></a>
+ 
+diff --git a/packages/client/connection/src/browser-auth.ts b/packages/client/connection/src/browser-auth.ts
+index 9c8b6d55a4..81ecda8bb0 100644
+--- a/packages/client/connection/src/browser-auth.ts
++++ b/packages/client/connection/src/browser-auth.ts
+@@ -350,6 +350,10 @@ export class BrowserAuth {
+    * peer address locked by earlier failures receives 429 without a PIN check;
+    * a wrong PIN extends that peer's failure streak; the correct PIN clears the
+    * streak and mints the same authority-bound cookie as the token exchange.
++   * The caller MUST apply the Host/Origin trust fence first: this method admits
++   * any authority the policy names, and the fence is what stops a cross-site
++   * page from spending a peer's attempt budget. The registered `/pair` route is
++   * the only caller.
+    * @param req - pairing request facts including the TCP peer address.
+    * @param pin - submitted six-digit PIN.
+    * @param res - response this exchange owns for every outcome.
+diff --git a/packages/client/connection/src/index.ts b/packages/client/connection/src/index.ts
+index 7f026d223f..29d73c6ff1 100644
+--- a/packages/client/connection/src/index.ts
++++ b/packages/client/connection/src/index.ts
+@@ -11,7 +11,6 @@ import { bridge, DEFAULT_MAX_REQUEST_BODY_BYTES } from './http-bridge.ts'
+ import { assertTrustedAuthority, isTrustedApiRequest } from './api-request-trust.ts'
+ import { BrowserAuth, type BrowserPairingPolicy } from './browser-auth.ts'
+ import { HostConnectionService } from './rpc-host.ts'
+-import type { HostConnectionHandle } from './rpc.ts'
+ import { ConnectionRecoveryConfigSchema, resolveConnectionConfig, type ConnectionRecoveryConfig } from './recovery-config.ts'
+ 
+ export type {
+@@ -59,6 +58,9 @@ const PAIRING_PATH = '/pair'
+ /** Maximum accepted pairing form body; the form carries one six-digit field. */
+ const MAX_PAIRING_BODY_BYTES = 1024
+ 
++/** Media type the pairing form submits; any other type is refused before the body is read. */
++const PAIRING_MEDIA_TYPE = 'application/x-www-form-urlencoded'
++
+ /** Failed PIN submissions from one peer address before that address is locked out. */
+ const DEFAULT_MAX_PAIRING_ATTEMPTS = 5
+ 
+@@ -167,11 +169,8 @@ export async function apply(ctx: Context, config?: ConnectionConfig): Promise<vo
+     for (const entry of pairing.authorities) assertTrustedAuthority(entry)
+   }
+   assertImageBodyCapacity(ctx, maxRequestBodyBytes)
+-  const connection = new HostConnectionService(
+-    ctx,
+-    trustedHosts,
+-    await BrowserAuth.create(ctx.root, ctx.credentials, cookieMaxAgeDays, pairing),
+-  )
++  const browserAuth = await BrowserAuth.create(ctx.root, ctx.credentials, cookieMaxAgeDays, pairing)
++  const connection = new HostConnectionService(ctx, trustedHosts, browserAuth)
+   ctx.inject(['webServer'], (webCtx) => {
+     assertImageBodyCapacity(webCtx, maxRequestBodyBytes)
+     webCtx.on('webserver/index-inject', (table) => {
+@@ -196,7 +195,7 @@ export async function apply(ctx: Context, config?: ConnectionConfig): Promise<vo
+       const pairingRoute: WebRoute = {
+         kind: 'exact',
+         path: PAIRING_PATH,
+-        handler: (req, res) => handlePairingSubmission(connection, trustedHosts, req, res),
++        handler: (req, res) => handlePairingSubmission(browserAuth, trustedHosts, req, res),
+       }
+       webCtx.effect(
+         () => webCtx.webServer.register(pairingRoute),
+@@ -210,12 +209,18 @@ export async function apply(ctx: Context, config?: ConnectionConfig): Promise<vo
+ }
+ 
+ /**
+- * Serve one `/pair` submission: trust fence, method and body-size limits, form
+- * parse, then the PIN exchange. This route owns every response, so the
+- * frontend-static fallback keeps serving only GET and HEAD.
++ * Serve one `/pair` submission: trust fence, method, media type and body-size
++ * limits, form parse, then the PIN exchange. This route is the exchange's only
++ * caller and owns every response, so the frontend-static fallback keeps serving
++ * only GET and HEAD.
++ * @param browserAuth - pairing owner; the fence below is what stops a
++ * cross-site page from spending a peer's attempt budget.
++ * @param trustedHosts - authorities the `/api` fence accepts.
++ * @param req - pairing request.
++ * @param res - response this route owns for every outcome.
+  */
+ async function handlePairingSubmission(
+-  connection: HostConnectionHandle,
++  browserAuth: BrowserAuth,
+   trustedHosts: readonly string[],
+   req: IncomingMessage,
+   res: ServerResponse,
+@@ -230,6 +235,12 @@ async function handlePairingSubmission(
+     res.end()
+     return
+   }
++  const mediaType = req.headers['content-type']?.split(';', 1)[0]?.trim().toLowerCase()
++  if (mediaType !== PAIRING_MEDIA_TYPE) {
++    res.writeHead(415, { 'cache-control': 'no-store' })
++    res.end()
++    return
++  }
+   const body = await readPairingBody(req)
+   if (body === undefined) {
+     res.writeHead(413, { 'cache-control': 'no-store', 'connection': 'close' })
+@@ -244,7 +255,7 @@ async function handlePairingSubmission(
+     res.end()
+     return
+   }
+-  connection.authorizePairing({
++  browserAuth.authorizePairing({
+     method: req.method,
+     url: req.url,
+     headers: req.headers,
+diff --git a/packages/client/connection/src/rpc-host.ts b/packages/client/connection/src/rpc-host.ts
+index 9ff764ac1e..8426fe572a 100644
+--- a/packages/client/connection/src/rpc-host.ts
++++ b/packages/client/connection/src/rpc-host.ts
+@@ -110,15 +110,6 @@ export class HostConnectionService extends Service implements HostConnectionHand
+     return this.browserAuth.pairing
+   }
+ 
+-  /** Exchange one submitted LAN pairing PIN for the browser-session cookie. */
+-  authorizePairing(
+-    request: ConnectionIndexRequest,
+-    pin: string,
+-    response: ConnectionIndexResponse,
+-  ): boolean {
+-    return this.browserAuth.authorizePairing(request, pin, response)
+-  }
+-
+   /** Add this process's launch token to the clean application URL. */
+   authenticatedUrl(baseUrl: string): string {
+     return this.browserAuth.authenticatedUrl(baseUrl)
+diff --git a/packages/client/connection/src/rpc.ts b/packages/client/connection/src/rpc.ts
+index 7e658d2bee..da3c593ec4 100644
+--- a/packages/client/connection/src/rpc.ts
++++ b/packages/client/connection/src/rpc.ts
+@@ -205,19 +205,6 @@ export interface HostConnectionHandle {
+   /** Process-local LAN pairing facts, or undefined when no pairing authority is configured. */
+   readonly pairing: BrowserPairing | undefined
+ 
+-  /**
+-   * Exchange one submitted LAN pairing PIN for the browser-session cookie.
+-   * @param request - pairing request facts including the TCP peer address.
+-   * @param pin - submitted six-digit PIN.
+-   * @param response - response the exchange owns for every outcome.
+-   * @returns false, because the exchange always writes the response.
+-   */
+-  authorizePairing(
+-    request: ConnectionIndexRequest,
+-    pin: string,
+-    response: ConnectionIndexResponse,
+-  ): boolean
+-
+   /**
+    * Add the fresh process token to an ordinary Web application URL.
+    * @param baseUrl - clean canonical browser origin.
+diff --git a/packages/client/connection/tests/node-half.host.spec.ts b/packages/client/connection/tests/node-half.host.spec.ts
+index eb6d37f2ae..159eb674b3 100644
+--- a/packages/client/connection/tests/node-half.host.spec.ts
++++ b/packages/client/connection/tests/node-half.host.spec.ts
+@@ -524,6 +524,13 @@ describe('connection node half', () => {
+       await route.handler(fakeRequest(trusted, '/pair'), wrongMethod.response)
+       expect(wrongMethod.state.status).toBe(405)
+ 
++      const wrongMediaType = fakeResponse()
++      await route.handler(
++        fakePairPost({ ...trusted, 'content-type': 'text/plain' }, `pin=${pin}`),
++        wrongMediaType.response,
++      )
++      expect(wrongMediaType.state).toMatchObject({ status: 415, headers: { 'cache-control': 'no-store' } })
++
+       const declaredOversize = fakeResponse()
+       await route.handler(
+         fakePairPost({ ...trusted, 'content-length': '2048' }, `pin=${pin}`),
+@@ -555,12 +562,72 @@ describe('connection node half', () => {
+       const paired = fakeResponse()
+       await route.handler(fakePairPost(trusted, `pin=${pin}`), paired.response)
+       expect(paired.state).toMatchObject({ status: 303, headers: { location: '/' } })
+-      expect(paired.state.headers?.['set-cookie']).toMatch(/^dsh-auth-/u)
++      expect(paired.state.headers?.['set-cookie'])
++        .toMatch(/^dsh-auth-[A-Za-z0-9_-]+=v1\.[^;]+; Max-Age=\d+; Path=\/; Expires=.*; HttpOnly; SameSite=Strict$/u)
++      expect(paired.state.headers?.['set-cookie']).not.toContain('Secure')
++    } finally {
++      await dispose()
++    }
++  })
++
++  it('locks a peer address out on the sixth submission under the shipped defaults', async () => {
++    const { routes, connection, dispose } = await mounted({
++      trustedHosts: ['192.168.1.5'],
++      pairing: { authorities: ['192.168.1.5'] },
++    })
++    try {
++      const route = routes.find(candidate => candidate.path === '/pair')!
++      const pin = connection.pairing?.pin
++      if (pin === undefined) throw new Error('pairing PIN was not published')
++      const wrong = pin === '000000' ? '111111' : '000000'
++      const submit = async (): Promise<number | undefined> => {
++        const denied = fakeResponse()
++        await route.handler(fakePairPost({ host: '192.168.1.5' }, `pin=${wrong}`), denied.response)
++        return denied.state.status
++      }
++      // Pins the default failure count: five rejected submissions, then the
++      // lockout answer. The window itself is not observable without fake clocks.
++      for (const attempt of [1, 2, 3, 4, 5]) {
++        expect([attempt, await submit()]).toEqual([attempt, 401])
++      }
++      expect(await submit()).toBe(429)
+     } finally {
+       await dispose()
+     }
+   })
+ 
++  it('rejects an empty or non-numeric PIN and still admits the correct one', async () => {
++    const { routes, connection, dispose } = await mounted({
++      trustedHosts: ['192.168.1.5'],
++      pairing: { authorities: ['192.168.1.5'], maxFailedAttempts: 100, lockoutMilliseconds: 60_000 },
++    })
++    try {
++      const route = routes.find(candidate => candidate.path === '/pair')!
++      const pin = connection.pairing?.pin
++      if (pin === undefined) throw new Error('pairing PIN was not published')
++      for (const body of ['pin=', 'pin=abcdef', 'pin=12']) {
++        const rejected = fakeResponse()
++        await route.handler(fakePairPost({ host: '192.168.1.5' }, body), rejected.response)
++        expect([body, rejected.state.status]).toEqual([body, 401])
++      }
++      const paired = fakeResponse()
++      await route.handler(fakePairPost({ host: '192.168.1.5' }, `pin=${pin}`), paired.response)
++      expect(paired.state).toMatchObject({ status: 303, headers: { location: '/' } })
++    } finally {
++      await dispose()
++    }
++  })
++
++  it('removes the LAN pairing route with the fiber', async () => {
++    const { routes, dispose } = await mounted({
++      trustedHosts: ['192.168.1.5'],
++      pairing: { authorities: ['192.168.1.5'] },
++    })
++    expect(routes.map(route => route.path)).toEqual([API_PATH, '/pair'])
++    await dispose()
++    expect(routes).toHaveLength(0)
++  })
++
+   it('defaults the pairing policy, disables it when empty, and rejects a malformed authority', async () => {
+     const defaults = await mounted({ pairing: { authorities: ['192.168.1.5'] } })
+     expect(defaults.routes.map(route => route.path)).toEqual([API_PATH, '/pair'])
