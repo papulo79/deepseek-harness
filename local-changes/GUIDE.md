@@ -54,6 +54,9 @@ Para ver el código de upstream sin tus cambios: `git checkout master`.
 ./local-changes/sync-upstream.sh --push   # además publica master y la rama en el fork
 ```
 
+Es la única vía de actualización: el botón *Sync fork* descartaría tus commits, y
+el rebase de este script solo los recoloca. `--ayuda` lista sus opciones.
+
 El script hace, en este orden:
 
 1. se niega a ejecutarse si hay cambios sin commitear;
@@ -142,6 +145,9 @@ Instálalo, o actualízalo tras cambiarlo, con:
 ```sh
 cp local-changes/arrancar-web.sh ~/Desarrollo/deepseek-harness-web/arrancar-web.sh
 ```
+
+`sync-upstream.sh` refresca esa copia por su cuenta cuando la versionada cambia,
+así que el `cp` solo hace falta si no usas el script.
 
 También puedes ejecutarlo directamente desde el repositorio, sin instalar nada:
 

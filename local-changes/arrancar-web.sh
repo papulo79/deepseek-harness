@@ -17,7 +17,7 @@ set -euo pipefail
 
 DIR_SCRIPT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO="${DSH_REPO:-/home/reverendo/Desarrollo/deepseek-harness}"
-RAMA="${RAMA:-local/custom}"
+BRANCH="${BRANCH:-local/custom}"
 UPSTREAM="${UPSTREAM:-upstream}"
 UPSTREAM_BRANCH="${UPSTREAM_BRANCH:-master}"
 PNPM="${PNPM:-pnpm}"
@@ -57,7 +57,7 @@ Opciones:
   -h, --ayuda        muestra esta ayuda
 
 Variables: DSH_REPO (raíz del repositorio), DSH_PARCHE (parche a reaplicar),
-RAMA (rama de trabajo, por defecto local/custom), UPSTREAM (remoto del proyecto
+BRANCH (rama de trabajo, por defecto local/custom), UPSTREAM (remoto del proyecto
 original, por defecto upstream), PNPM (ejecutable de pnpm).
 AYUDA
 }
@@ -120,11 +120,11 @@ arbol_limpio() { [ -z "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]; }
 # parche sino cambiarse a esa rama. Solo se parchea si la rama no existe.
 if ! cambio_presente && [ "$APLICAR_PARCHE" = 1 ]; then
   rama="$(rama_actual)"
-  if [ "$rama" != "$RAMA" ] \
-     && git -C "$REPO" show-ref --verify --quiet "refs/heads/$RAMA" \
+  if [ "$rama" != "$BRANCH" ] \
+     && git -C "$REPO" show-ref --verify --quiet "refs/heads/$BRANCH" \
      && arbol_limpio; then
-    log "el cambio LAN no está en «$rama»; cambiando a la rama $RAMA"
-    git -C "$REPO" checkout "$RAMA"
+    log "el cambio LAN no está en «$rama»; cambiando a la rama $BRANCH"
+    git -C "$REPO" checkout "$BRANCH"
   fi
 fi
 
@@ -135,9 +135,9 @@ elif [ "$APLICAR_PARCHE" = 1 ] && [ "${#PARCHES[@]}" != 0 ]; then
   # clon sin ella, parchear master es la única vía y es lo que este lanzador
   # hacía siempre.
   if [ "$(rama_actual)" = master ] && arbol_limpio \
-     && git -C "$REPO" show-ref --verify --quiet "refs/heads/$RAMA"; then
+     && git -C "$REPO" show-ref --verify --quiet "refs/heads/$BRANCH"; then
     error "«master» es un espejo de upstream y no debe acumular cambios locales"
-    error "usa la rama que ya contiene el cambio: git -C \"$REPO\" checkout $RAMA"
+    error "usa la rama que ya contiene el cambio: git -C \"$REPO\" checkout $BRANCH"
     exit 1
   fi
   log "el cambio LAN no está aplicado; reaplicando ${#PARCHES[@]} parche(s)"
@@ -181,20 +181,20 @@ avisar_de_cambios_pendientes() {
     return 0
   fi
   local nuevos sin_publicar sin_bajar
-  nuevos="$(contar_commits "$RAMA..$UPSTREAM/$UPSTREAM_BRANCH")"
-  sin_publicar="$(contar_commits "origin/$RAMA..$RAMA")"
-  sin_bajar="$(contar_commits "$RAMA..origin/$RAMA")"
+  nuevos="$(contar_commits "$BRANCH..$UPSTREAM/$UPSTREAM_BRANCH")"
+  sin_publicar="$(contar_commits "origin/$BRANCH..$BRANCH")"
+  sin_bajar="$(contar_commits "$BRANCH..origin/$BRANCH")"
   if [ "$nuevos" != 0 ]; then
-    log "AVISO: $UPSTREAM/$UPSTREAM_BRANCH tiene $nuevos commit(s) nuevos; cuando puedas: ./local-changes/sync-upstream.sh"
+    log "AVISO: $UPSTREAM/$UPSTREAM_BRANCH tiene $nuevos commit(s) nuevos; cuando puedas: $REPO/local-changes/sync-upstream.sh"
   fi
   if [ "$sin_publicar" != 0 ]; then
-    log "AVISO: tienes $sin_publicar commit(s) sin publicar en $RAMA"
+    log "AVISO: tienes $sin_publicar commit(s) sin publicar en $BRANCH"
   fi
   if [ "$sin_bajar" != 0 ]; then
-    log "AVISO: origin/$RAMA tiene $sin_bajar commit(s) que no tienes; haz: git pull --ff-only"
+    log "AVISO: origin/$BRANCH tiene $sin_bajar commit(s) que no tienes; haz: git -C \"$REPO\" pull --ff-only"
   fi
   if [ "$nuevos" = 0 ] && [ "$sin_publicar" = 0 ] && [ "$sin_bajar" = 0 ]; then
-    log "al día con $UPSTREAM/$UPSTREAM_BRANCH y con origin/$RAMA"
+    log "al día con $UPSTREAM/$UPSTREAM_BRANCH y con origin/$BRANCH"
   fi
 }
 
