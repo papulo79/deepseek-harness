@@ -1,0 +1,367 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Pablo=20De=20Andr=C3=A9s?= <pdeandres35@gmail.com>
+Date: Sun, 13 Sep 2026 15:35:07 +0200
+Subject: [PATCH 3/3] feat(web): bound LAN pairing guesses with a process-wide
+ budget
+
+A per-peer lockout alone leaves the six-digit PIN guessable by a peer set that
+rotates source addresses: five attempts per five minutes per address, and a
+local process has all of 127/8 to spend. `maxTotalFailedAttempts` (default 50)
+counts failed submissions across every peer and stops pairing once the budget
+is spent, so the guesses available against one process PIN are bounded however
+many addresses the attacker uses. Only a restart reopens pairing, which the 429
+body names.
+
+The budget is keyed by the root application context like the PIN, so a
+Connection hot reload cannot hand an attacker a fresh budget for a PIN the
+operator already read.
+---
+ .../2026-09-10-lan-mobile-pairing.i18n.yaml   |  4 +-
+ .../2026-09-10-lan-mobile-pairing.md          |  2 +-
+ .../2026-09-10-lan-mobile-pairing.zh.md       |  2 +-
+ docs/config-catalog.i18n.yaml                 |  4 +-
+ docs/config-catalog.md                        |  8 +++-
+ docs/config-catalog.zh.md                     |  6 +++
+ packages/client/connection/README.i18n.yaml   |  4 +-
+ packages/client/connection/README.md          |  2 +-
+ packages/client/connection/README.zh.md       |  2 +-
+ .../client/connection/src/browser-auth.ts     | 42 +++++++++++++++----
+ packages/client/connection/src/index.ts       | 11 +++++
+ .../tests/browser-auth.host.spec.ts           |  1 +
+ .../connection/tests/node-half.host.spec.ts   | 33 +++++++++++++++
+ 13 files changed, 103 insertions(+), 18 deletions(-)
+
+diff --git a/.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.i18n.yaml b/.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.i18n.yaml
+index 497a4c37f8..28d4cc04c7 100644
+--- a/.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.i18n.yaml
++++ b/.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.i18n.yaml
+@@ -2,5 +2,5 @@
+ # side as of the last confirmed-consistent state. Both languages carry equal authority;
+ # after editing either side, bring the other along and re-record with:
+ #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.md
+-2026-09-10-lan-mobile-pairing.md: 68f8afe9f138dc2b5b372eba77c48b3b1c9c050d
+-2026-09-10-lan-mobile-pairing.zh.md: f8a81a553e386e15565989a0212def9ca254d0e0
++2026-09-10-lan-mobile-pairing.md: 22e4fe7b58506393eee54b193bb4c0a6622f4e77
++2026-09-10-lan-mobile-pairing.zh.md: baf35c4db20355777842092b377579ff4cf39187
+diff --git a/.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.md b/.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.md
+index 68f8afe9f1..22e4fe7b58 100644
+--- a/.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.md
++++ b/.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.md
+@@ -12,7 +12,7 @@ The Web GUI began as a loopback-only surface: `dsh web` bound `127.0.0.1`, and t
+ 
+ `dsh web --host 0.0.0.0` is a supported, explicit opt-in. Loopback remains the default, and the CLI adds no host validation of its own: the parsed value reaches the webserver row, whose schemastery `host` literal union is the single validity source, so any other value fails the load loudly. After the server binds, the Web runtime samples the machine's non-internal IPv4 addresses once, adds them to the `/api` Host/Origin fence, and prints them as a clean LAN URL next to a six-digit PIN; the loopback URL keeps the process token and its existing exchange.
+ 
+-`dsh-client-connection` owns pairing because it already owns browser authentication. With `config.pairing.authorities` non-empty it mints one six-digit PIN per process, retained by the root application context across Connection hot reloads, and registers an exact `POST /pair` route. An unauthenticated `GET` for the dist root whose Host matches a pairing authority receives a minimal HTML form containing no PIN; every other unauthenticated index request keeps the plain 401. The route applies the Host/Origin fence first, caps the body at 1024 bytes, requires exactly one `pin` field in an `application/x-www-form-urlencoded` body, and compares it with the existing constant-time comparison. A match mints the same signed, authority-bound cookie as the local token exchange, so a paired phone and the local browser converge on one authentication path. Five failed submissions from one peer address (`maxFailedAttempts`) lock that address out for five minutes (`lockoutMilliseconds`), during which it receives 429 without a PIN check.
++`dsh-client-connection` owns pairing because it already owns browser authentication. With `config.pairing.authorities` non-empty it mints one six-digit PIN per process, retained by the root application context across Connection hot reloads, and registers an exact `POST /pair` route. An unauthenticated `GET` for the dist root whose Host matches a pairing authority receives a minimal HTML form containing no PIN; every other unauthenticated index request keeps the plain 401. The route applies the Host/Origin fence first, caps the body at 1024 bytes, requires exactly one `pin` field in an `application/x-www-form-urlencoded` body, and compares it with the existing constant-time comparison. A match mints the same signed, authority-bound cookie as the local token exchange, so a paired phone and the local browser converge on one authentication path. Five failed submissions from one peer address (`maxFailedAttempts`) lock that address out for five minutes (`lockoutMilliseconds`), during which it receives 429 without a PIN check; `maxTotalFailedAttempts` (default 50) failures from every peer together stop pairing until the process restarts, which bounds a peer set that rotates source addresses.
+ 
+ The Web bundle passes `ctx.webRuntime.lanAddresses` as the pairing authorities, so pairing exists exactly when the CLI bound all interfaces and at least one LAN address was discovered. The Web runtime prints the PIN only when both the LAN URL and `ctx.connection.pairing` exist, and the local token URL is never replaced.
+ 
+diff --git a/.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.zh.md b/.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.zh.md
+index f8a81a553e..baf35c4db2 100644
+--- a/.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.zh.md
++++ b/.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.zh.md
+@@ -12,7 +12,7 @@ Web GUI 最初只是 loopback 表层：`dsh web` 绑定 `127.0.0.1`，CLI 直接
+ 
+ `dsh web --host 0.0.0.0` 是受支持且明确的主动选择。loopback 仍是默认值，CLI 本身不添加主机校验：解析出的值直接写入 webserver 配置项，其 schemastery `host` 字面量联合类型是唯一有效性真源，其他任何值都会让加载显式失败。服务器完成绑定后，Web 运行时只采样一次本机所有非 internal 的 IPv4 地址，把它们加入 `/api` 的 Host/Origin 栅栏，并以干净的 LAN URL 加六位 PIN 的形式打印；loopback URL 仍保留进程 token 及其原有交换流程。
+ 
+-`dsh-client-connection` 负责配对，因为它本就负责浏览器认证。当 `config.pairing.authorities` 非空时，它为每个进程生成一个六位 PIN（由根应用上下文持有，可跨 Connection 热重载保留），并注册精确的 `POST /pair` 路由。Host 与配对 authority 匹配、对 dist 根路径发起的未认证 `GET` 会收到一个不含 PIN 的极简 HTML 表单；其他未认证的 index 请求仍得到普通的 401。该路由先应用 Host/Origin 栅栏，把请求体限制在 1024 字节，要求 `application/x-www-form-urlencoded` 请求体中恰好有一个 `pin` 字段，并使用现有的恒定时间比较进行校验。比对成功即签发与本地 token 交换相同的、签名且绑定 authority 的 cookie，因此已配对的手机与本地浏览器汇聚到同一条认证路径。同一对端地址失败五次（`maxFailedAttempts`）后，该地址会被锁定五分钟（`lockoutMilliseconds`），期间收到 429 且不校验 PIN。
++`dsh-client-connection` 负责配对，因为它本就负责浏览器认证。当 `config.pairing.authorities` 非空时，它为每个进程生成一个六位 PIN（由根应用上下文持有，可跨 Connection 热重载保留），并注册精确的 `POST /pair` 路由。Host 与配对 authority 匹配、对 dist 根路径发起的未认证 `GET` 会收到一个不含 PIN 的极简 HTML 表单；其他未认证的 index 请求仍得到普通的 401。该路由先应用 Host/Origin 栅栏，把请求体限制在 1024 字节，要求 `application/x-www-form-urlencoded` 请求体中恰好有一个 `pin` 字段，并使用现有的恒定时间比较进行校验。比对成功即签发与本地 token 交换相同的、签名且绑定 authority 的 cookie，因此已配对的手机与本地浏览器汇聚到同一条认证路径。同一对端地址失败五次（`maxFailedAttempts`）后，该地址会被锁定五分钟（`lockoutMilliseconds`），期间收到 429 且不校验 PIN；所有对端合计失败 `maxTotalFailedAttempts` 次（默认 50）后配对会停止，直到进程重启，从而约束轮换源地址的对端集合。
+ 
+ Web 组合把 `ctx.webRuntime.lanAddresses` 作为配对 authority 传入，因此只有 CLI 绑定了所有接口且至少探测到一个 LAN 地址时才存在配对。仅当 LAN URL 与 `ctx.connection.pairing` 同时存在时，Web 运行时才打印 PIN，并且绝不替换本地 token URL。
+ 
+diff --git a/docs/config-catalog.i18n.yaml b/docs/config-catalog.i18n.yaml
+index 7435c39b87..cb7c47cbdd 100644
+--- a/docs/config-catalog.i18n.yaml
++++ b/docs/config-catalog.i18n.yaml
+@@ -2,5 +2,5 @@
+ # side as of the last confirmed-consistent state. Both languages carry equal authority;
+ # after editing either side, bring the other along and re-record with:
+ #   pnpm run verify-translation-pairing --write docs/config-catalog.md
+-config-catalog.md: 34fb98a771f4631c8b8d413dc630e01ea1be4818
+-config-catalog.zh.md: 35e4dad010e1ffbc2bbb1b2667464242e8a8b0fb
++config-catalog.md: 5d83e2ff47a9b7265853fa5e05e10feb331d8823
++config-catalog.zh.md: 01f639d8cd4668ef0e6621d79a66bc0a7b1385c2
+diff --git a/docs/config-catalog.md b/docs/config-catalog.md
+index 34fb98a771..5d83e2ff47 100644
+--- a/docs/config-catalog.md
++++ b/docs/config-catalog.md
+@@ -400,10 +400,16 @@ export interface ConnectionPairingConfig {
+   maxFailedAttempts?: number
+   /** Milliseconds one locked peer address stays rejected. @default 300000 */
+   lockoutMilliseconds?: number
++  /**
++   * Failed submissions from every peer together before pairing stops until the
++   * process restarts. Bounds what a set of source addresses can spend between
++   * them, which a per-peer lockout alone cannot. @default 50
++   */
++  maxTotalFailedAttempts?: number
+ }
+ ```
+ 
+-Source: [`packages/client/connection/src/index.ts:118`](../packages/client/connection/src/index.ts)
++Source: [`packages/client/connection/src/index.ts:129`](../packages/client/connection/src/index.ts)
+ 
+ <a id="deepseek-aidsh-client-hmr"></a>
+ 
+diff --git a/docs/config-catalog.zh.md b/docs/config-catalog.zh.md
+index 35e4dad010..01f639d8cd 100644
+--- a/docs/config-catalog.zh.md
++++ b/docs/config-catalog.zh.md
+@@ -402,6 +402,12 @@ export interface ConnectionPairingConfig {
+   maxFailedAttempts?: number
+   /** Milliseconds one locked peer address stays rejected. @default 300000 */
+   lockoutMilliseconds?: number
++  /**
++   * Failed submissions from every peer together before pairing stops until the
++   * process restarts. Bounds what a set of source addresses can spend between
++   * them, which a per-peer lockout alone cannot. @default 50
++   */
++  maxTotalFailedAttempts?: number
+ }
+ ```
+ 
+diff --git a/packages/client/connection/README.i18n.yaml b/packages/client/connection/README.i18n.yaml
+index 3a26872ba2..1d82464528 100644
+--- a/packages/client/connection/README.i18n.yaml
++++ b/packages/client/connection/README.i18n.yaml
+@@ -2,5 +2,5 @@
+ # side as of the last confirmed-consistent state. Both languages carry equal authority;
+ # after editing either side, bring the other along and re-record with:
+ #   pnpm run verify-translation-pairing --write packages/client/connection/README.md
+-README.md: 37e9bd25df34b63edf256ba1111855ebb4f6627d
+-README.zh.md: 697ab93e61c9fe489b29338146bd49bef43c98cb
++README.md: 25a3aa0545c2b5ba9c10fb31fe1d5e2da075f406
++README.zh.md: 8b69f3b03b494ae98f369f06ef72b9f48505ae0e
+diff --git a/packages/client/connection/README.md b/packages/client/connection/README.md
+index 37e9bd25df..25a3aa0545 100644
+--- a/packages/client/connection/README.md
++++ b/packages/client/connection/README.md
+@@ -38,7 +38,7 @@ The cookie signing secret is the owner-scoped `client-connection/browser-session
+ 
+ Before authentication, every request still passes `src/api-request-trust.ts`. Its `Host` must be loopback or match a `trustedHosts` entry: exact on `host:port`, any port on port-less entries, both sides WHATWG-normalized. An attached `Origin` must equal that Host and `sec-fetch-site: cross-site` is refused. Malformed configured authorities fail plugin load. These checks defend DNS rebinding and cross-site browser requests; they never establish identity. A failed Host/Origin check returns 403, while a trusted but unauthenticated request returns 401. Decision records: [browser request trust](../../../.agents/notes/implemented/architecture/2026-07-28-api-browser-trust-boundary.md), [browser token authentication](../../../.agents/notes/implemented/architecture/2026-08-24-browser-token-authentication.md), and [LAN mobile pairing](../../../.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.md).
+ 
+-When `config.pairing.authorities` is non-empty, Connection mints one six-digit PIN per process and registers the exact `POST /pair` route. An unauthenticated `GET` for the dist root on a pairing authority receives a minimal HTML form instead of 401, while the local token exchange and the plain 401 response are unchanged. The route applies the Host/Origin fence, caps the body at 1024 bytes, requires exactly one `pin` field in an `application/x-www-form-urlencoded` body, and checks it against the process PIN; a match mints the same authority-bound cookie as the token exchange. `maxFailedAttempts` (default 5) failed submissions from one peer address set `lockoutMilliseconds` (default 300000), during which that address receives 429 without a PIN check. The form never contains the PIN, and `ctx.connection.pairing` exposes the PIN only to the composing Web runtime, which prints it.
++When `config.pairing.authorities` is non-empty, Connection mints one six-digit PIN per process and registers the exact `POST /pair` route. An unauthenticated `GET` for the dist root on a pairing authority receives a minimal HTML form instead of 401, while the local token exchange and the plain 401 response are unchanged. The route applies the Host/Origin fence, caps the body at 1024 bytes, requires exactly one `pin` field in an `application/x-www-form-urlencoded` body, and checks it against the process PIN; a match mints the same authority-bound cookie as the token exchange. `maxFailedAttempts` (default 5) failed submissions from one peer address set `lockoutMilliseconds` (default 300000), during which that address receives 429 without a PIN check. `maxTotalFailedAttempts` (default 50) failed submissions from every peer together stop pairing until the process restarts, so a peer set that rotates source addresses cannot buy unlimited guesses. The form never contains the PIN, and `ctx.connection.pairing` exposes the PIN only to the composing Web runtime, which prints it.
+ 
+ <a id="connection-generation"></a>
+ ## Connection generation
+diff --git a/packages/client/connection/README.zh.md b/packages/client/connection/README.zh.md
+index 697ab93e61..8b69f3b03b 100644
+--- a/packages/client/connection/README.zh.md
++++ b/packages/client/connection/README.zh.md
+@@ -38,7 +38,7 @@ cookie 签名密钥是 `ctx.credentials` 中由 `client-connection/browser-sessi
+ 
+ 认证之前，每个请求仍经过 `src/api-request-trust.ts`。其 `Host` 必须是 loopback，或与 `trustedHosts` 条目匹配：带端口的 `host:port` 精确匹配，不带端口的条目匹配任意端口，两侧均经 WHATWG 归一化。若附带 `Origin`，它必须等于该 Host；`sec-fetch-site: cross-site` 一律拒绝。畸形配置 authority 会让插件加载失败。这些检查防御 DNS rebinding 与跨站浏览器请求，绝不建立身份。Host/Origin 校验失败返回 403；Host 可信但未认证的请求返回 401。决策记录：[浏览器请求信任](../../../.agents/notes/implemented/architecture/2026-07-28-api-browser-trust-boundary.zh.md)、[浏览器令牌认证](../../../.agents/notes/implemented/architecture/2026-08-24-browser-token-authentication.zh.md)与 [LAN 移动端配对](../../../.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.zh.md)。
+ 
+-当 `config.pairing.authorities` 非空时，Connection 会为每个进程生成一个六位 PIN，并注册精确的 `POST /pair` 路由。在配对 authority 上对 dist 根路径发起未认证的 `GET` 会收到一个极简 HTML 表单，而不是 401；本地 token 交换与普通 401 响应保持不变。该路由先应用 Host/Origin 栅栏，把请求体限制在 1024 字节，要求 `application/x-www-form-urlencoded` 请求体中恰好有一个 `pin` 字段，并将其与进程 PIN 比对；比对成功即签发与 token 交换相同的、绑定 authority 的 cookie。同一对端地址失败 `maxFailedAttempts` 次（默认 5）后会设置 `lockoutMilliseconds`（默认 300000），在此期间该地址收到 429 且不再校验 PIN。表单本身从不包含 PIN，`ctx.connection.pairing` 只把 PIN 暴露给负责打印它的组装 Web 运行时。
++当 `config.pairing.authorities` 非空时，Connection 会为每个进程生成一个六位 PIN，并注册精确的 `POST /pair` 路由。在配对 authority 上对 dist 根路径发起未认证的 `GET` 会收到一个极简 HTML 表单，而不是 401；本地 token 交换与普通 401 响应保持不变。该路由先应用 Host/Origin 栅栏，把请求体限制在 1024 字节，要求 `application/x-www-form-urlencoded` 请求体中恰好有一个 `pin` 字段，并将其与进程 PIN 比对；比对成功即签发与 token 交换相同的、绑定 authority 的 cookie。同一对端地址失败 `maxFailedAttempts` 次（默认 5）后会设置 `lockoutMilliseconds`（默认 300000），在此期间该地址收到 429 且不再校验 PIN。所有对端合计失败 `maxTotalFailedAttempts` 次（默认 50）后，配对会停止，直到进程重启，因此轮换源地址的对端集合无法获得无限次猜测。表单本身从不包含 PIN，`ctx.connection.pairing` 只把 PIN 暴露给负责打印它的组装 Web 运行时。
+ 
+ <a id="connection-generation"></a>
+ ## Connection generation
+diff --git a/packages/client/connection/src/browser-auth.ts b/packages/client/connection/src/browser-auth.ts
+index 81ecda8bb0..f69934802c 100644
+--- a/packages/client/connection/src/browser-auth.ts
++++ b/packages/client/connection/src/browser-auth.ts
+@@ -21,6 +21,7 @@ const STORED_SECRET_VERSION = 1
+ const BASE64URL_PATTERN = /^[A-Za-z0-9_-]*$/
+ const PROCESS_LAUNCH_TOKENS = new WeakMap<object, string>()
+ const PROCESS_PAIRING_PINS = new WeakMap<object, string>()
++const PROCESS_PAIRING_BUDGETS = new WeakMap<object, { failures: number }>()
+ const PAIRING_PIN_DIGITS = 6
+ const PAIRING_PIN_LIMIT = 10 ** PAIRING_PIN_DIGITS
+ 
+@@ -32,6 +33,8 @@ export interface BrowserPairingPolicy {
+   readonly maxFailedAttempts: number
+   /** Milliseconds one locked peer address stays rejected. */
+   readonly lockoutMilliseconds: number
++  /** Failed submissions from every peer together before pairing stops until the process exits. */
++  readonly maxTotalFailedAttempts: number
+ }
+ 
+ /** One peer address's failed PIN submissions and lock state. */
+@@ -92,6 +95,19 @@ function processPairingPin(owner: object): string {
+   return created
+ }
+ 
++/**
++ * The process's spent pairing guesses. Keyed like the PIN so a Connection hot
++ * reload cannot hand an attacker a fresh budget for a PIN the operator already
++ * read; the count survives until the process exits.
++ */
++function processPairingBudget(owner: object): { failures: number } {
++  const existing = PROCESS_PAIRING_BUDGETS.get(owner)
++  if (existing !== undefined) return existing
++  const created = { failures: 0 }
++  PROCESS_PAIRING_BUDGETS.set(owner, created)
++  return created
++}
++
+ function header(
+   headers: ConnectionTrustRequest['headers'],
+   name: string,
+@@ -245,7 +261,11 @@ async function initializeSecret(credentials: CredentialProvider): Promise<Buffer
+ export class BrowserAuth {
+   private readonly launchToken: string
+   private readonly maxAgeMilliseconds: number
+-  private readonly pairingState: { policy: BrowserPairingPolicy; pin: string } | undefined
++  private readonly pairingState: {
++    policy: BrowserPairingPolicy
++    pin: string
++    budget: { failures: number }
++  } | undefined
+   private readonly pairingAttempts = new Map<string, PairingAttempts>()
+ 
+   private constructor(
+@@ -257,7 +277,7 @@ export class BrowserAuth {
+     this.launchToken = processLaunchToken(processOwner)
+     this.pairingState = policy === undefined
+       ? undefined
+-      : { policy, pin: processPairingPin(processOwner) }
++      : { policy, pin: processPairingPin(processOwner), budget: processPairingBudget(processOwner) }
+     this.maxAgeMilliseconds = maxAgeDays * DAY_MILLISECONDS
+     if (!Number.isSafeInteger(this.maxAgeMilliseconds)
+       || !Number.isSafeInteger(Date.now() + this.maxAgeMilliseconds)) {
+@@ -350,10 +370,13 @@ export class BrowserAuth {
+    * peer address locked by earlier failures receives 429 without a PIN check;
+    * a wrong PIN extends that peer's failure streak; the correct PIN clears the
+    * streak and mints the same authority-bound cookie as the token exchange.
+-   * The caller MUST apply the Host/Origin trust fence first: this method admits
+-   * any authority the policy names, and the fence is what stops a cross-site
+-   * page from spending a peer's attempt budget. The registered `/pair` route is
+-   * the only caller.
++   * A process-wide budget bounds the guesses every peer together may spend, so
++   * a fresh source address resets the streak but not the budget: once it is
++   * spent, the correct PIN is refused too and only a process restart reopens
++   * pairing. The caller MUST apply the Host/Origin trust fence first: this
++   * method admits any authority the policy names, and the fence is what stops a
++   * cross-site page from spending a peer's attempt budget. The registered
++   * `/pair` route is the only caller.
+    * @param req - pairing request facts including the TCP peer address.
+    * @param pin - submitted six-digit PIN.
+    * @param res - response this exchange owns for every outcome.
+@@ -372,6 +395,10 @@ export class BrowserAuth {
+       this.writePairingRejection(res, 401)
+       return false
+     }
++    if (pairing.budget.failures >= pairing.policy.maxTotalFailedAttempts) {
++      this.writePairingRejection(res, 429)
++      return false
++    }
+     const attempts = this.pairingAttempts.get(peer)
+     if (attempts !== undefined && attempts.lockedUntil > Date.now()) {
+       this.writePairingRejection(res, 429)
+@@ -385,6 +412,7 @@ export class BrowserAuth {
+       return false
+     }
+     const failures = (this.pairingAttempts.get(peer)?.failures ?? 0) + 1
++    pairing.budget.failures += 1
+     this.pairingAttempts.set(peer, {
+       failures,
+       lockedUntil: failures >= pairing.policy.maxFailedAttempts
+@@ -458,7 +486,7 @@ export class BrowserAuth {
+       'content-type': 'text/plain; charset=utf-8',
+     })
+     res.end(status === 429
+-      ? 'too many pairing attempts; wait before trying again.\n'
++      ? 'too many pairing attempts; wait before trying again, or restart dsh web to mint a new PIN.\n'
+       : 'dsh web pairing rejected; check the PIN printed by dsh web.\n')
+   }
+ 
+diff --git a/packages/client/connection/src/index.ts b/packages/client/connection/src/index.ts
+index 29d73c6ff1..e50e6ddba0 100644
+--- a/packages/client/connection/src/index.ts
++++ b/packages/client/connection/src/index.ts
+@@ -67,6 +67,9 @@ const DEFAULT_MAX_PAIRING_ATTEMPTS = 5
+ /** Milliseconds one locked peer address stays rejected. */
+ const DEFAULT_PAIRING_LOCKOUT_MILLISECONDS = 300_000
+ 
++/** Failed PIN submissions from every peer together before pairing stops until restart. */
++const DEFAULT_MAX_PAIRING_TOTAL_ATTEMPTS = 50
++
+ /**
+  * LAN pairing policy: browsers arriving on these authorities receive the PIN
+  * form instead of the 401 response. An empty authority list disables both the
+@@ -79,12 +82,19 @@ export interface ConnectionPairingConfig {
+   maxFailedAttempts?: number
+   /** Milliseconds one locked peer address stays rejected. @default 300000 */
+   lockoutMilliseconds?: number
++  /**
++   * Failed submissions from every peer together before pairing stops until the
++   * process restarts. Bounds what a set of source addresses can spend between
++   * them, which a per-peer lockout alone cannot. @default 50
++   */
++  maxTotalFailedAttempts?: number
+ }
+ 
+ const ConnectionPairingConfigSchema: z<ConnectionPairingConfig> = z.object({
+   authorities: z.array(String).default([]),
+   maxFailedAttempts: z.natural().min(1).default(DEFAULT_MAX_PAIRING_ATTEMPTS),
+   lockoutMilliseconds: z.natural().min(1).default(DEFAULT_PAIRING_LOCKOUT_MILLISECONDS),
++  maxTotalFailedAttempts: z.natural().min(1).default(DEFAULT_MAX_PAIRING_TOTAL_ATTEMPTS),
+ })
+ 
+ /** Resolve a loaded pairing config into the policy BrowserAuth enforces. */
+@@ -94,6 +104,7 @@ function resolvePairing(config: ConnectionPairingConfig | undefined): BrowserPai
+     authorities: config.authorities,
+     maxFailedAttempts: config.maxFailedAttempts ?? DEFAULT_MAX_PAIRING_ATTEMPTS,
+     lockoutMilliseconds: config.lockoutMilliseconds ?? DEFAULT_PAIRING_LOCKOUT_MILLISECONDS,
++    maxTotalFailedAttempts: config.maxTotalFailedAttempts ?? DEFAULT_MAX_PAIRING_TOTAL_ATTEMPTS,
+   }
+ }
+ 
+diff --git a/packages/client/connection/tests/browser-auth.host.spec.ts b/packages/client/connection/tests/browser-auth.host.spec.ts
+index 6709c5b5f0..3af5d1fca4 100644
+--- a/packages/client/connection/tests/browser-auth.host.spec.ts
++++ b/packages/client/connection/tests/browser-auth.host.spec.ts
+@@ -86,6 +86,7 @@ function pairingPolicy(overrides?: Partial<BrowserPairingPolicy>): BrowserPairin
+     authorities: ['192.168.1.5'],
+     maxFailedAttempts: 5,
+     lockoutMilliseconds: 300_000,
++    maxTotalFailedAttempts: 50,
+     ...overrides,
+   }
+ }
+diff --git a/packages/client/connection/tests/node-half.host.spec.ts b/packages/client/connection/tests/node-half.host.spec.ts
+index 159eb674b3..980af3ebb3 100644
+--- a/packages/client/connection/tests/node-half.host.spec.ts
++++ b/packages/client/connection/tests/node-half.host.spec.ts
+@@ -596,6 +596,39 @@ describe('connection node half', () => {
+     }
+   })
+ 
++  it('stops pairing for every peer once the process-wide failure budget is spent', async () => {
++    const { routes, connection, dispose } = await mounted({
++      trustedHosts: ['192.168.1.5'],
++      pairing: {
++        authorities: ['192.168.1.5'],
++        maxFailedAttempts: 100,
++        lockoutMilliseconds: 60_000,
++        maxTotalFailedAttempts: 2,
++      },
++    })
++    try {
++      const route = routes.find(candidate => candidate.path === '/pair')!
++      const pin = connection.pairing?.pin
++      if (pin === undefined) throw new Error('pairing PIN was not published')
++      const wrong = pin === '000000' ? '111111' : '000000'
++      for (const peer of ['192.168.1.10', '192.168.1.11']) {
++        const denied = fakeResponse()
++        await route.handler(fakePairPost({ host: '192.168.1.5' }, `pin=${wrong}`, peer), denied.response)
++        expect([peer, denied.state.status]).toEqual([peer, 401])
++      }
++      // A third address spends none of its own streak, and the correct PIN is
++      // refused too: only a restart reopens pairing.
++      const exhausted = fakeResponse()
++      await route.handler(
++        fakePairPost({ host: '192.168.1.5' }, `pin=${pin}`, '192.168.1.12'),
++        exhausted.response,
++      )
++      expect(exhausted.state).toMatchObject({ status: 429, headers: { 'cache-control': 'no-store' } })
++    } finally {
++      await dispose()
++    }
++  })
++
+   it('rejects an empty or non-numeric PIN and still admits the correct one', async () => {
+     const { routes, connection, dispose } = await mounted({
+       trustedHosts: ['192.168.1.5'],
