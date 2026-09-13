@@ -11,11 +11,16 @@ perderlos y sin dejar de recibir las funcionalidades nuevas.
 | `upstream` | `git@github.com:deepseek-ai/deepseek-harness.git` | Proyecto original. Solo lectura. |
 | `origin` | `git@github.com:papulo79/deepseek-harness.git` | Tu fork. Aquí se publica todo. |
 
-- `master` es un espejo exacto de `upstream/master`. No lleva cambios propios,
-  así que el botón *Sync fork* de GitHub y los PRs contra upstream siguen
-  funcionando.
-- `local/custom` es la rama de trabajo. Tus cambios viven ahí como commits
-  normales encima de `master`.
+- `master` es un espejo exacto de `upstream/master`, sin cambios propios: sirve
+  para comparar y para el `merge --ff-only` de la actualización.
+- `local/custom` es la rama de trabajo **y la rama por defecto del fork**. Tus
+  cambios viven ahí como commits normales encima de `master`.
+
+> **No uses el botón *Sync fork* de GitHub.** Sobre la rama por defecto,
+> `local/custom`, esa rama no es ancestro de `upstream/master`, así que el botón
+> ofrece *descartar* tus commits. La actualización buena es
+> `./local-changes/sync-upstream.sh`, que rebasa y publica con
+> `--force-with-lease`.
 - `local-changes/patches/` es esa misma serie exportada con `git format-patch`,
   para poder reconstruirla sobre cualquier versión limpia de upstream.
 
@@ -31,15 +36,16 @@ Los cambios incluidos hoy:
 
 ## En otra máquina
 
-La rama por defecto del fork es `master`, así que un clon aterriza en upstream
-limpio. Cambia a la rama de trabajo y arranca:
+La rama por defecto del fork es la de trabajo, así que un clon ya trae el
+cambio:
 
 ```sh
 git clone git@github.com:papulo79/deepseek-harness.git
 cd deepseek-harness
-git checkout local/custom
 ./local-changes/arrancar-web.sh      # instala dependencias y compila si faltan
 ```
+
+Para ver el código de upstream sin tus cambios: `git checkout master`.
 
 ## Actualizar desde upstream
 
@@ -146,6 +152,11 @@ También puedes ejecutarlo directamente desde el repositorio, sin instalar nada:
 En ese caso la huella de compilación vive en `$REPO/.artifacts/`, que git
 ignora, así que no ensucia el árbol. `DSH_REPO` o `--repo` apuntan a otro
 checkout, y `DSH_SELLO` a otra huella.
+
+En cada arranque consulta `upstream` y `origin` y avisa —sin bloquear nada— de
+los commits nuevos de upstream (toca rebasar), de los que tengas sin publicar y
+de los que estén en el fork y no en local. Si no hay red, lo dice y arranca
+igual. `--sin-avisos` desactiva la consulta.
 
 Un detalle esperado: la huella incluye el commit y el estado de git, así que el
 primer arranque tras cualquier commit reconstruye una vez (`pnpm run build`)

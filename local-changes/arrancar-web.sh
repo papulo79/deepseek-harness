@@ -17,6 +17,9 @@ set -euo pipefail
 
 DIR_SCRIPT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO="${DSH_REPO:-/home/reverendo/Desarrollo/deepseek-harness}"
+RAMA="${RAMA:-local/custom}"
+UPSTREAM="${UPSTREAM:-upstream}"
+UPSTREAM_BRANCH="${UPSTREAM_BRANCH:-master}"
 PNPM="${PNPM:-pnpm}"
 
 HOST="0.0.0.0"
@@ -26,6 +29,7 @@ SOLO_BUILD=0
 APLICAR_PARCHE=1
 ABRIR=0
 PERMITIR_MULTI=0
+AVISAR=1
 
 # Puertos habituales de `dsh web`; dos procesos que compartan $DSH_HOME compiten
 # por el bloqueo de escritura de cada sesión (session.lock).
@@ -46,13 +50,15 @@ Opciones:
       --sin-build    no comprueba ni ejecuta la compilación
       --solo-build   compila si hace falta y termina, sin arrancar el servicio
       --sin-parche   no intenta reaplicar la serie de parches
+      --sin-avisos   no consulta los remotos para avisar de cambios pendientes
       --permitir-multi
                      arranca aunque ya haya otro `dsh web` escuchando (puede
                      provocar SessionAlreadyOwnedError en las sesiones activas)
   -h, --ayuda        muestra esta ayuda
 
 Variables: DSH_REPO (raíz del repositorio), DSH_PARCHE (parche a reaplicar),
-PNPM (ejecutable de pnpm).
+RAMA (rama de trabajo, por defecto local/custom), UPSTREAM (remoto del proyecto
+original, por defecto upstream), PNPM (ejecutable de pnpm).
 AYUDA
 }
 
@@ -65,6 +71,7 @@ while [ $# -gt 0 ]; do
     --sin-build) HACER_BUILD=0; shift ;;
     --solo-build) SOLO_BUILD=1; shift ;;
     --sin-parche) APLICAR_PARCHE=0; shift ;;
+    --sin-avisos) AVISAR=0; shift ;;
     --permitir-multi) PERMITIR_MULTI=1; shift ;;
     -h|--ayuda) uso; exit 0 ;;
     *) error "opción desconocida: $1"; uso; exit 2 ;;
@@ -109,15 +116,15 @@ cambio_presente() {
 rama_actual() { git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || printf '?'; }
 arbol_limpio() { [ -z "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]; }
 
-# Desde que el cambio vive en la rama local/custom, lo normal no es reaplicar el
+# Desde que el cambio vive en la rama de trabajo, lo normal no es reaplicar el
 # parche sino cambiarse a esa rama. Solo se parchea si la rama no existe.
 if ! cambio_presente && [ "$APLICAR_PARCHE" = 1 ]; then
   rama="$(rama_actual)"
-  if [ "$rama" != local/custom ] \
-     && git -C "$REPO" show-ref --verify --quiet refs/heads/local/custom \
+  if [ "$rama" != "$RAMA" ] \
+     && git -C "$REPO" show-ref --verify --quiet "refs/heads/$RAMA" \
      && arbol_limpio; then
-    log "el cambio LAN no está en «$rama»; cambiando a la rama local/custom"
-    git -C "$REPO" checkout local/custom
+    log "el cambio LAN no está en «$rama»; cambiando a la rama $RAMA"
+    git -C "$REPO" checkout "$RAMA"
   fi
 fi
 
@@ -128,9 +135,9 @@ elif [ "$APLICAR_PARCHE" = 1 ] && [ "${#PARCHES[@]}" != 0 ]; then
   # clon sin ella, parchear master es la única vía y es lo que este lanzador
   # hacía siempre.
   if [ "$(rama_actual)" = master ] && arbol_limpio \
-     && git -C "$REPO" show-ref --verify --quiet refs/heads/local/custom; then
+     && git -C "$REPO" show-ref --verify --quiet "refs/heads/$RAMA"; then
     error "«master» es un espejo de upstream y no debe acumular cambios locales"
-    error "usa la rama que ya contiene el cambio: git -C \"$REPO\" checkout local/custom"
+    error "usa la rama que ya contiene el cambio: git -C \"$REPO\" checkout $RAMA"
     exit 1
   fi
   log "el cambio LAN no está aplicado; reaplicando ${#PARCHES[@]} parche(s)"
@@ -150,6 +157,49 @@ elif [ "$APLICAR_PARCHE" = 1 ] && [ "${#PARCHES[@]}" != 0 ]; then
 else
   error "el cambio LAN no está aplicado y no hay serie que reaplicar (--sin-parche o parches ausentes)"
   exit 1
+fi
+
+# Consulta los remotos y avisa, sin bloquear nunca el arranque, del trabajo
+# pendiente: commits nuevos en upstream (toca rebasar) y desajustes con la rama
+# publicada. Un fallo de red o de credenciales deja constancia y sigue.
+contar_commits() { git -C "$REPO" rev-list --count "$1" 2>/dev/null || printf '0'; }
+
+consultar_remotos() {
+  local remoto
+  for remoto in "$UPSTREAM" origin; do
+    if command -v timeout >/dev/null 2>&1; then
+      timeout 15 git -C "$REPO" fetch --quiet "$remoto" 2>/dev/null || return 1
+    else
+      git -C "$REPO" fetch --quiet "$remoto" 2>/dev/null || return 1
+    fi
+  done
+}
+
+avisar_de_cambios_pendientes() {
+  if ! consultar_remotos; then
+    log "no pude consultar los remotos ahora mismo; arranco igual"
+    return 0
+  fi
+  local nuevos sin_publicar sin_bajar
+  nuevos="$(contar_commits "$RAMA..$UPSTREAM/$UPSTREAM_BRANCH")"
+  sin_publicar="$(contar_commits "origin/$RAMA..$RAMA")"
+  sin_bajar="$(contar_commits "$RAMA..origin/$RAMA")"
+  if [ "$nuevos" != 0 ]; then
+    log "AVISO: $UPSTREAM/$UPSTREAM_BRANCH tiene $nuevos commit(s) nuevos; cuando puedas: ./local-changes/sync-upstream.sh"
+  fi
+  if [ "$sin_publicar" != 0 ]; then
+    log "AVISO: tienes $sin_publicar commit(s) sin publicar en $RAMA"
+  fi
+  if [ "$sin_bajar" != 0 ]; then
+    log "AVISO: origin/$RAMA tiene $sin_bajar commit(s) que no tienes; haz: git pull --ff-only"
+  fi
+  if [ "$nuevos" = 0 ] && [ "$sin_publicar" = 0 ] && [ "$sin_bajar" = 0 ]; then
+    log "al día con $UPSTREAM/$UPSTREAM_BRANCH y con origin/$RAMA"
+  fi
+}
+
+if [ "$AVISAR" = 1 ]; then
+  avisar_de_cambios_pendientes
 fi
 
 puerto_en_uso() {
