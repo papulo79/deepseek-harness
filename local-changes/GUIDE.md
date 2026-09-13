@@ -168,6 +168,21 @@ Un detalle esperado: la huella incluye el commit y el estado de git, así que el
 primer arranque tras cualquier commit reconstruye una vez (`pnpm run build`)
 aunque el código sea idéntico.
 
+## Protección del fork
+
+Aunque el repositorio es público, **la escritura es solo tuya**:
+
+- El único colaborador es `papulo79`, con rol `admin`. Nadie más puede empujar,
+  fusionar ni reescribir ramas.
+- `pull_request_creation_policy` está en `collaborators_only`: cualquiera puede
+  leer y comentar, pero solo un colaborador abre PRs.
+- El ruleset «proteger las ramas del fork» aplica la regla `deletion` a
+  `local/custom` y `master`, así que GitHub rechaza borrarlas.
+
+Lo que un repositorio público no permite evitar es que otros lo lean o lo
+bifurquen. Si algún día necesitas privacidad, hay que pasar a un espejo —un
+repositorio nuevo que no sea fork— y subir ahí las ramas.
+
 ## Reglas para convivir con los gates del repositorio
 
 - **Ningún `README.md` en esta carpeta.** El gate `verify-translation-pairing`
