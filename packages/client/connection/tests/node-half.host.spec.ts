@@ -55,6 +55,22 @@ function fakeRawPost(headers: Record<string, string>, url: string, body: string)
   return request
 }
 
+/** urlencoded pairing submission carrying one PEER and the given form body. */
+function fakePairPost(
+  headers: Record<string, string>,
+  body: string,
+  peerAddress = '192.168.1.23',
+): IncomingMessage {
+  const request = Readable.from([Buffer.from(body)]) as unknown as IncomingMessage
+  Object.assign(request, {
+    url: '/pair',
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers },
+    socket: { remoteAddress: peerAddress },
+  })
+  return request
+}
+
 /** Response recorder compatible with both the fence's short-circuit and the bridge. */
 function fakeResponse(): {
   response: ServerResponse
@@ -484,6 +500,84 @@ describe('connection node half', () => {
       .toThrow('invalid or reserved RPC channel')
     await remove()
     await fiber.dispose()
+  })
+
+  it('mounts the LAN pairing route and enforces its trust, method, size, and form rules', async () => {
+    const { routes, connection, dispose } = await mounted({
+      trustedHosts: ['192.168.1.5'],
+      pairing: { authorities: ['192.168.1.5'], maxFailedAttempts: 3, lockoutMilliseconds: 60_000 },
+    })
+    try {
+      expect(routes.map(route => route.path)).toEqual([API_PATH, '/pair'])
+      const route = routes.find(candidate => candidate.path === '/pair')!
+      const pairing = connection.pairing
+      expect(pairing?.pin).toMatch(/^\d{6}$/u)
+      const pin = pairing!.pin
+      const wrong = pin === '000000' ? '111111' : '000000'
+      const trusted = { host: '192.168.1.5:3080' }
+
+      const untrusted = fakeResponse()
+      await route.handler(fakePairPost({ host: 'other.example' }, `pin=${pin}`), untrusted.response)
+      expect(untrusted.state).toMatchObject({ status: 403, body: 'forbidden' })
+
+      const wrongMethod = fakeResponse()
+      await route.handler(fakeRequest(trusted, '/pair'), wrongMethod.response)
+      expect(wrongMethod.state.status).toBe(405)
+
+      const declaredOversize = fakeResponse()
+      await route.handler(
+        fakePairPost({ ...trusted, 'content-length': '2048' }, `pin=${pin}`),
+        declaredOversize.response,
+      )
+      expect(declaredOversize.state).toMatchObject({ status: 413, headers: { 'cache-control': 'no-store' } })
+
+      const chunkedOversize = fakeResponse()
+      await route.handler(fakePairPost(trusted, `pin=${'x'.repeat(2048)}`), chunkedOversize.response)
+      expect(chunkedOversize.state.status).toBe(413)
+
+      for (const body of ['other=1', `pin=${pin}&pin=${pin}`]) {
+        const malformed = fakeResponse()
+        await route.handler(fakePairPost(trusted, body), malformed.response)
+        expect(malformed.state).toMatchObject({ status: 400, headers: { 'cache-control': 'no-store' } })
+      }
+
+      const denied = fakeResponse()
+      await route.handler(fakePairPost(trusted, `pin=${wrong}`), denied.response)
+      expect(denied.state.status).toBe(401)
+
+      // A connection torn down before dispatch exposes no peer address.
+      const peerless = fakePairPost(trusted, `pin=${pin}`)
+      Object.assign(peerless, { socket: { remoteAddress: null } })
+      const noPeer = fakeResponse()
+      await route.handler(peerless, noPeer.response)
+      expect(noPeer.state.status).toBe(401)
+
+      const paired = fakeResponse()
+      await route.handler(fakePairPost(trusted, `pin=${pin}`), paired.response)
+      expect(paired.state).toMatchObject({ status: 303, headers: { location: '/' } })
+      expect(paired.state.headers?.['set-cookie']).toMatch(/^dsh-auth-/u)
+    } finally {
+      await dispose()
+    }
+  })
+
+  it('defaults the pairing policy, disables it when empty, and rejects a malformed authority', async () => {
+    const defaults = await mounted({ pairing: { authorities: ['192.168.1.5'] } })
+    expect(defaults.routes.map(route => route.path)).toEqual([API_PATH, '/pair'])
+    expect(defaults.connection.pairing?.pin).toMatch(/^\d{6}$/u)
+    await defaults.dispose()
+
+    const disabled = await mounted({ pairing: { authorities: [] } })
+    expect(disabled.routes.map(route => route.path)).toEqual([API_PATH])
+    expect(disabled.connection.pairing).toBeUndefined()
+    await disabled.dispose()
+
+    const ctx = new Context()
+    provideBrowserCredentials(ctx)
+    ctx.provide('webServer', fakeHttpServer([], []) as WebServer)
+    await expect(apply(ctx, { pairing: { authorities: ['harness.internal/path'] } }))
+      .rejects.toThrow(/not a bare host\[:port\] authority/)
+    expect(ctx.get('connection')).toBeUndefined()
   })
 })
 

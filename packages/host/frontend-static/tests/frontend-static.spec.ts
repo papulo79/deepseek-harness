@@ -7,6 +7,7 @@
  */
 
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { request as httpRequest } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -30,7 +31,7 @@ afterEach(async () => {
 })
 
 /** Write a dist fixture and the authenticated Web rows, then boot them through the real Loader. */
-async function loadComposition(): Promise<Context> {
+async function loadComposition(pairingAuthorities: string[] = []): Promise<Context> {
   root = await mkdtemp(join(tmpdir(), 'dsh-frontend-static-'))
   const dist = join(root, 'dist')
   await mkdir(dist)
@@ -41,6 +42,7 @@ async function loadComposition(): Promise<Context> {
   await writeFile(join(dist, 'manifest.webmanifest'), '{}')
   await mkdir(join(dist, 'empty'))
   const configPath = join(root, 'cordis.yml')
+  const authorities = pairingAuthorities.map(entry => `'${entry}'`).join(', ')
   await writeFile(configPath, [
     "- name: '@deepseek-ai/dsh-credentials-local'",
     '  config:',
@@ -51,6 +53,10 @@ async function loadComposition(): Promise<Context> {
     "    host: '127.0.0.1'",
     '    port: 0',
     "- name: '@deepseek-ai/dsh-client-connection'",
+    '  config:',
+    `    trustedHosts: [${authorities}]`,
+    '    pairing:',
+    `      authorities: [${authorities}]`,
     '- id: frontend',
     "  name: '@deepseek-ai/dsh-host-frontend-static'",
     '  config:',
@@ -203,4 +209,78 @@ describe('real Loader composition', () => {
     expect((await request(port, '/no/such/route')).status).toBe(404)
     expect(() => server.registerFallback(() => {})).not.toThrow()
   })
+
+  it('serves the LAN pairing page and exchanges its PIN for the session cookie', { timeout: 60_000 }, async () => {
+    const loaded = await loadComposition(['192.168.1.5'])
+    const port = loaded.webServer.port
+    const pairing = loaded.connection.pairing
+    expect(pairing?.pin).toMatch(/^\d{6}$/u)
+    const pin = pairing!.pin
+    const wrong = pin === '000000' ? '111111' : '000000'
+
+    const page = await lanRequest(port, 'GET', '/')
+    expect(page).toMatchObject({ status: 200, type: 'text/html; charset=utf-8' })
+    expect(page.body).toContain('<form method="post" action="/pair">')
+    expect(page.body).toContain('name="pin"')
+    expect(page.body).not.toContain(pin)
+    // An authority that is not the configured LAN literal keeps the 401.
+    expect((await lanRequest(port, 'GET', '/', { authority: 'other.example' })).status).toBe(401)
+
+    expect((await lanRequest(port, 'POST', '/pair', { body: `pin=${wrong}` })).status).toBe(401)
+
+    const paired = await lanRequest(port, 'POST', '/pair', {
+      body: new URLSearchParams({ pin }).toString(),
+    })
+    expect(paired.status).toBe(303)
+    expect(paired.setCookie).not.toBeNull()
+    const cookie = paired.setCookie!.split(';', 1)[0]!
+
+    // The issued cookie serves the shell on the same LAN authority.
+    const shell = await lanRequest(port, 'GET', '/', { cookie })
+    expect(shell).toMatchObject({ status: 200, type: 'text/html; charset=utf-8' })
+    expect(shell.body).toContain('shell')
+  })
 })
+
+/**
+ * One request through raw node:http, because a phone sends a Host naming a LAN
+ * authority and the browser Fetch API owns that header.
+ */
+function lanRequest(
+  port: number,
+  method: string,
+  path: string,
+  options?: { authority?: string; cookie?: string; body?: string },
+): Promise<{ status: number; type: string | null; body: string; setCookie: string | null }> {
+  const body = options?.body
+  return new Promise((resolve, reject) => {
+    const request = httpRequest({
+      host: '127.0.0.1',
+      port,
+      path,
+      method,
+      headers: {
+        host: options?.authority ?? `192.168.1.5:${String(port)}`,
+        ...body === undefined ? {} : {
+          'content-type': 'application/x-www-form-urlencoded',
+          'content-length': String(Buffer.byteLength(body)),
+        },
+        ...options?.cookie === undefined ? {} : { cookie: options.cookie },
+      },
+    }, (response) => {
+      const chunks: Buffer[] = []
+      response.on('data', (chunk: Buffer) => chunks.push(chunk))
+      response.on('end', () => {
+        resolve({
+          status: response.statusCode ?? 0,
+          type: response.headers['content-type'] ?? null,
+          body: Buffer.concat(chunks).toString('utf8'),
+          setCookie: response.headers['set-cookie']?.[0] ?? null,
+        })
+      })
+    })
+    request.on('error', reject)
+    if (body !== undefined) request.write(body)
+    request.end()
+  })
+}

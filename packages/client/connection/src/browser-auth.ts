@@ -1,9 +1,11 @@
 /** Browser-session authentication for the Host Connection carrier. */
 
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto'
 import { credentialKey } from '@deepseek-ai/dsh-credentials'
 import type { CredentialProvider, CredentialRecord } from '@deepseek-ai/dsh-credentials'
+import { isConfiguredAuthority } from './api-request-trust.ts'
 import type {
+  BrowserPairing,
   ConnectionIndexRequest,
   ConnectionIndexResponse,
   ConnectionTrustRequest,
@@ -18,6 +20,26 @@ const COOKIE_PAYLOAD_VERSION = 1
 const STORED_SECRET_VERSION = 1
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]*$/
 const PROCESS_LAUNCH_TOKENS = new WeakMap<object, string>()
+const PROCESS_PAIRING_PINS = new WeakMap<object, string>()
+const PAIRING_PIN_DIGITS = 6
+const PAIRING_PIN_LIMIT = 10 ** PAIRING_PIN_DIGITS
+
+/** Resolved LAN pairing policy; each field carries its effective value. */
+export interface BrowserPairingPolicy {
+  /** Authorities whose unauthenticated browsers receive the pairing page. */
+  readonly authorities: readonly string[]
+  /** Failed submissions from one peer address before that address is locked out. */
+  readonly maxFailedAttempts: number
+  /** Milliseconds one locked peer address stays rejected. */
+  readonly lockoutMilliseconds: number
+}
+
+/** One peer address's failed PIN submissions and lock state. */
+interface PairingAttempts {
+  failures: number
+  /** Absolute lock expiry in milliseconds; zero while the peer is not locked. */
+  lockedUntil: number
+}
 
 interface StoredSecretPayload {
   readonly version: typeof STORED_SECRET_VERSION
@@ -54,6 +76,19 @@ function processLaunchToken(owner: object): string {
   if (existing !== undefined) return existing
   const created = encodeBase64Url(randomBytes(SECRET_BYTES))
   PROCESS_LAUNCH_TOKENS.set(owner, created)
+  return created
+}
+
+/**
+ * The process's pairing PIN. Keyed by the root application context so a
+ * Connection hot reload keeps the PIN the operator already read, while a new
+ * process mints a different one.
+ */
+function processPairingPin(owner: object): string {
+  const existing = PROCESS_PAIRING_PINS.get(owner)
+  if (existing !== undefined) return existing
+  const created = randomInt(0, PAIRING_PIN_LIMIT).toString().padStart(PAIRING_PIN_DIGITS, '0')
+  PROCESS_PAIRING_PINS.set(owner, created)
   return created
 }
 
@@ -122,6 +157,31 @@ function sessionCookie(name: string, value: string, expiresAt: number, maxAgeSec
   return `${name}=${value}; Max-Age=${String(maxAgeSeconds)}; Path=/; Expires=${new Date(expiresAt).toUTCString()}; HttpOnly; SameSite=Strict`
 }
 
+/**
+ * The LAN pairing form. It carries no PIN and no token: the operator reads the
+ * PIN from the host's console and types it here.
+ */
+const PAIRING_PAGE = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dsh web pairing</title>
+</head>
+<body>
+<main>
+<h1>Pair this device</h1>
+<p>Enter the six-digit PIN printed by dsh web on the host computer.</p>
+<form method="post" action="/pair">
+<label for="pin">PIN</label>
+<input id="pin" name="pin" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
+<button type="submit">Pair</button>
+</form>
+</main>
+</body>
+</html>
+`
+
 function signature(secret: Buffer, body: string): Buffer {
   return createHmac('sha256', secret).update(body).digest()
 }
@@ -185,13 +245,19 @@ async function initializeSecret(credentials: CredentialProvider): Promise<Buffer
 export class BrowserAuth {
   private readonly launchToken: string
   private readonly maxAgeMilliseconds: number
+  private readonly pairingState: { policy: BrowserPairingPolicy; pin: string } | undefined
+  private readonly pairingAttempts = new Map<string, PairingAttempts>()
 
   private constructor(
     processOwner: object,
     private readonly secret: Buffer,
     maxAgeDays: number,
+    policy: BrowserPairingPolicy | undefined,
   ) {
     this.launchToken = processLaunchToken(processOwner)
+    this.pairingState = policy === undefined
+      ? undefined
+      : { policy, pin: processPairingPin(processOwner) }
     this.maxAgeMilliseconds = maxAgeDays * DAY_MILLISECONDS
     if (!Number.isSafeInteger(this.maxAgeMilliseconds)
       || !Number.isSafeInteger(Date.now() + this.maxAgeMilliseconds)) {
@@ -205,14 +271,22 @@ export class BrowserAuth {
    * @param processOwner - root application context retaining one token across Connection reloads.
    * @param credentials - persistent credential provider for the Web profile.
    * @param maxAgeDays - positive absolute browser-cookie lifetime in days.
+   * @param pairing - resolved LAN pairing policy; omitted when no pairing authority is configured.
    * @returns initialized authentication owner with the process owner's launch token.
    */
   static async create(
     processOwner: object,
     credentials: CredentialProvider,
     maxAgeDays: number,
+    pairing?: BrowserPairingPolicy,
   ): Promise<BrowserAuth> {
-    return new BrowserAuth(processOwner, await initializeSecret(credentials), maxAgeDays)
+    const policy = pairing === undefined || pairing.authorities.length === 0 ? undefined : pairing
+    return new BrowserAuth(processOwner, await initializeSecret(credentials), maxAgeDays, policy)
+  }
+
+  /** Process-local LAN pairing facts, or undefined when no pairing authority is configured. */
+  get pairing(): BrowserPairing | undefined {
+    return this.pairingState === undefined ? undefined : { pin: this.pairingState.pin }
   }
 
   /**
@@ -232,7 +306,9 @@ export class BrowserAuth {
   /**
    * Authenticate an index request. A valid root query token mints the cookie
    * and redirects to clean `/`; a valid cookie lets the caller serve the
-   * index; every other request receives the same minimal 401 response.
+   * index; an unauthenticated request on a configured LAN pairing authority
+   * receives the pairing form; every other request receives the same minimal
+   * 401 response.
    * @param req - incoming root or configured-index request.
    * @param res - response owned when this method returns false.
    * @returns true only when the caller may serve index.html.
@@ -245,23 +321,7 @@ export class BrowserAuth {
       const authority = requestAuthority(req.headers)
       if (req.method === 'GET' && url.pathname === '/' && tokens.length === 1
         && authority !== undefined && tokenMatches(tokens.join(''), this.launchToken)) {
-        const issuedAt = Date.now()
-        const expiresAt = issuedAt + this.maxAgeMilliseconds
-        const value = encodeCookie({
-          version: COOKIE_PAYLOAD_VERSION,
-          authority,
-          issuedAt,
-          expiresAt,
-        }, this.secret)
-        res.writeHead(303, {
-          'cache-control': 'no-store',
-          'location': '/',
-          'referrer-policy': 'no-referrer',
-          'set-cookie': sessionCookie(
-            cookieName(authority), value, expiresAt, Math.floor(this.maxAgeMilliseconds / 1000),
-          ),
-        })
-        res.end()
+        this.issueCookie(authority, res)
         return false
       }
       if (req.method === 'GET' && url.pathname === '/' && this.isAuthenticated(req)) {
@@ -277,7 +337,57 @@ export class BrowserAuth {
       return false
     }
     if (this.isAuthenticated(req)) return true
+    if (req.method === 'GET' && this.isPairingAuthority(req)) {
+      this.writePairingPage(res)
+      return false
+    }
     this.writeUnauthorized(req, res)
+    return false
+  }
+
+  /**
+   * Exchange one submitted LAN pairing PIN for the browser-session cookie. A
+   * peer address locked by earlier failures receives 429 without a PIN check;
+   * a wrong PIN extends that peer's failure streak; the correct PIN clears the
+   * streak and mints the same authority-bound cookie as the token exchange.
+   * @param req - pairing request facts including the TCP peer address.
+   * @param pin - submitted six-digit PIN.
+   * @param res - response this exchange owns for every outcome.
+   * @returns false, because the exchange always writes the response.
+   */
+  authorizePairing(
+    req: ConnectionIndexRequest,
+    pin: string,
+    res: ConnectionIndexResponse,
+  ): boolean {
+    const pairing = this.pairingState
+    const authority = requestAuthority(req.headers)
+    const peer = req.peerAddress
+    if (pairing === undefined || peer === undefined
+      || authority === undefined || !this.isPairingAuthority(req)) {
+      this.writePairingRejection(res, 401)
+      return false
+    }
+    const attempts = this.pairingAttempts.get(peer)
+    if (attempts !== undefined && attempts.lockedUntil > Date.now()) {
+      this.writePairingRejection(res, 429)
+      return false
+    }
+    // A served lock is spent: the next window starts from zero.
+    if (attempts !== undefined && attempts.lockedUntil !== 0) this.pairingAttempts.delete(peer)
+    if (tokenMatches(pin, pairing.pin)) {
+      this.pairingAttempts.delete(peer)
+      this.issueCookie(authority, res)
+      return false
+    }
+    const failures = (this.pairingAttempts.get(peer)?.failures ?? 0) + 1
+    this.pairingAttempts.set(peer, {
+      failures,
+      lockedUntil: failures >= pairing.policy.maxFailedAttempts
+        ? Date.now() + pairing.policy.lockoutMilliseconds
+        : 0,
+    })
+    this.writePairingRejection(res, 401)
     return false
   }
 
@@ -299,6 +409,53 @@ export class BrowserAuth {
       && payload.expiresAt > now
       && payload.expiresAt > payload.issuedAt
       && payload.expiresAt - payload.issuedAt <= this.maxAgeMilliseconds
+  }
+
+  /** Whether the request authority is one this process pairs over the LAN. */
+  private isPairingAuthority(request: ConnectionTrustRequest): boolean {
+    const pairing = this.pairingState
+    if (pairing === undefined) return false
+    const authority = requestAuthority(request.headers)
+    return authority !== undefined && isConfiguredAuthority(authority, pairing.policy.authorities)
+  }
+
+  /** Write the 303 cookie exchange shared by the token and pairing paths. */
+  private issueCookie(authority: string, res: ConnectionIndexResponse): void {
+    const issuedAt = Date.now()
+    const expiresAt = issuedAt + this.maxAgeMilliseconds
+    const value = encodeCookie({
+      version: COOKIE_PAYLOAD_VERSION,
+      authority,
+      issuedAt,
+      expiresAt,
+    }, this.secret)
+    res.writeHead(303, {
+      'cache-control': 'no-store',
+      'location': '/',
+      'referrer-policy': 'no-referrer',
+      'set-cookie': sessionCookie(
+        cookieName(authority), value, expiresAt, Math.floor(this.maxAgeMilliseconds / 1000),
+      ),
+    })
+    res.end()
+  }
+
+  private writePairingPage(res: ConnectionIndexResponse): void {
+    res.writeHead(200, {
+      'cache-control': 'no-store',
+      'content-type': 'text/html; charset=utf-8',
+    })
+    res.end(PAIRING_PAGE)
+  }
+
+  private writePairingRejection(res: ConnectionIndexResponse, status: 401 | 429): void {
+    res.writeHead(status, {
+      'cache-control': 'no-store',
+      'content-type': 'text/plain; charset=utf-8',
+    })
+    res.end(status === 429
+      ? 'too many pairing attempts; wait before trying again.\n'
+      : 'dsh web pairing rejected; check the PIN printed by dsh web.\n')
   }
 
   private writeUnauthorized(req: ConnectionIndexRequest, res: ConnectionIndexResponse): void {

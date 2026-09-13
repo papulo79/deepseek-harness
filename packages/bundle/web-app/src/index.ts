@@ -5,7 +5,8 @@
  * the built frontend dist (workspace knowledge of this bundle, never user
  * config), mounts the `frontend-static` fallback owner over it, registers the
  * harness-source and web-surface prompt sections, the bash-visible web runtime
- * variable, the process-token URL line, and the default-browser handoff. The
+ * variable, the process-token URL line with its optional LAN pairing PIN, and
+ * the default-browser handoff. The
  * model and shell retain the clean URL. App command-line values arrive through
  * the `webStartup` service expressions in the bundle patch.
  * @module @deepseek-ai/dsh-web-app
@@ -263,12 +264,15 @@ export function apply(ctx: Context, config: Config): void {
         // Reuse the exact LAN snapshot provided to the /api trust fence.
         const lanCandidate = runtime.lanAddresses[0]
         const port = connectionCtx.webServer.port
-        const lanUrl = lanCandidate === undefined
-          ? undefined
-          : connectionCtx.connection.authenticatedUrl(`http://${lanCandidate}:${String(port)}`)
+        const pairing = connectionCtx.connection.pairing
+        // The clean LAN URL carries no process token; the PIN admits the phone.
+        const lanUrl = lanCandidate === undefined ? undefined : `http://${lanCandidate}:${String(port)}`
+        const lanAnnouncement = lanUrl === undefined || pairing === undefined
+          ? ''
+          : ` (LAN: ${lanUrl}; pairing PIN: ${pairing.pin})`
         ANNOUNCED_ROOTS.add(connectionCtx.root)
         if (config.printUrl) {
-          console.log(`dsh web: ${authenticatedUrl}${lanUrl === undefined ? '' : ` (LAN: ${lanUrl})`}`)
+          console.log(`dsh web: ${authenticatedUrl}${lanAnnouncement}`)
         }
         if (handoffBrowser) {
           console.log('dsh web: opening the default browser; pass --no-open to disable')

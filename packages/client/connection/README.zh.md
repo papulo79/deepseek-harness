@@ -36,7 +36,9 @@ kind: "package-reference"
 
 cookie 签名密钥是 `ctx.credentials` 中由 `client-connection/browser-session` 拥有的 grant 记录。本地提供方把它持久化到 `$DSH_HOME/.credentials.yaml`；`BrowserAuth` 在 Connection 激活期间加载或创建该记录，并把密钥留在内存中，因此请求认证同步执行。删除或替换该记录会在下一次 Connection 激活时生效。cookie 携带绝对签发与过期区间，`cookieMaxAgeDays` 默认设为 30 天，并在确定性名称与签名 payload 中同时绑定规范化 hostname 和 port。它是 host-only、`Path=/`、`HttpOnly`、`SameSite=Strict`；随附服务器使用 loopback HTTP，因此刻意不设置 `Secure`。
 
-认证之前，每个请求仍经过 `src/api-request-trust.ts`。其 `Host` 必须是 loopback，或与 `trustedHosts` 条目匹配：带端口的 `host:port` 精确匹配，不带端口的条目匹配任意端口，两侧均经 WHATWG 归一化。若附带 `Origin`，它必须等于该 Host；`sec-fetch-site: cross-site` 一律拒绝。畸形配置 authority 会让插件加载失败。这些检查防御 DNS rebinding 与跨站浏览器请求，绝不建立身份。Host/Origin 校验失败返回 403；Host 可信但未认证的请求返回 401。`dsh web --host 0.0.0.0` 仍不受支持。决策记录：[浏览器请求信任](../../../.agents/notes/implemented/architecture/2026-07-28-api-browser-trust-boundary.zh.md)与[浏览器令牌认证](../../../.agents/notes/implemented/architecture/2026-08-24-browser-token-authentication.zh.md)。
+认证之前，每个请求仍经过 `src/api-request-trust.ts`。其 `Host` 必须是 loopback，或与 `trustedHosts` 条目匹配：带端口的 `host:port` 精确匹配，不带端口的条目匹配任意端口，两侧均经 WHATWG 归一化。若附带 `Origin`，它必须等于该 Host；`sec-fetch-site: cross-site` 一律拒绝。畸形配置 authority 会让插件加载失败。这些检查防御 DNS rebinding 与跨站浏览器请求，绝不建立身份。Host/Origin 校验失败返回 403；Host 可信但未认证的请求返回 401。决策记录：[浏览器请求信任](../../../.agents/notes/implemented/architecture/2026-07-28-api-browser-trust-boundary.zh.md)、[浏览器令牌认证](../../../.agents/notes/implemented/architecture/2026-08-24-browser-token-authentication.zh.md)与 [LAN 移动端配对](../../../.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.zh.md)。
+
+当 `config.pairing.authorities` 非空时，Connection 会为每个进程生成一个六位 PIN，并注册精确的 `POST /pair` 路由。在配对 authority 上对 dist 根路径发起未认证的 `GET` 会收到一个极简 HTML 表单，而不是 401；本地 token 交换与普通 401 响应保持不变。该路由先应用 Host/Origin 栅栏，把请求体限制在 1024 字节，要求 `application/x-www-form-urlencoded` 请求体中恰好有一个 `pin` 字段，并将其与进程 PIN 比对；比对成功即签发与 token 交换相同的、绑定 authority 的 cookie。同一对端地址失败 `maxFailedAttempts` 次（默认 5）后会设置 `lockoutMilliseconds`（默认 300000），在此期间该地址收到 429 且不再校验 PIN。表单本身从不包含 PIN，`ctx.connection.pairing` 只把 PIN 暴露给负责打印它的组装 Web 运行时。
 
 <a id="connection-generation"></a>
 ## Connection generation

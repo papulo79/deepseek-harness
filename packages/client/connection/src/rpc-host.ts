@@ -13,6 +13,7 @@ import { isTrustedApiRequest } from './api-request-trust.ts'
 import { API_PATH } from './api-path.ts'
 import type { BrowserAuth } from './browser-auth.ts'
 import type {
+  BrowserPairing,
   ConnectionIndexRequest,
   ConnectionIndexResponse,
   ConnectionFetchRoute,
@@ -102,6 +103,20 @@ export class HostConnectionService extends Service implements HostConnectionHand
   /** Authenticate an index request through the process-token exchange or cookie. */
   authorizeIndex(request: ConnectionIndexRequest, response: ConnectionIndexResponse): boolean {
     return this.browserAuth.authorizeIndex(request, response)
+  }
+
+  /** Process-local LAN pairing facts, or undefined when no pairing authority is configured. */
+  get pairing(): BrowserPairing | undefined {
+    return this.browserAuth.pairing
+  }
+
+  /** Exchange one submitted LAN pairing PIN for the browser-session cookie. */
+  authorizePairing(
+    request: ConnectionIndexRequest,
+    pin: string,
+    response: ConnectionIndexResponse,
+  ): boolean {
+    return this.browserAuth.authorizePairing(request, pin, response)
   }
 
   /** Add this process's launch token to the clean application URL. */

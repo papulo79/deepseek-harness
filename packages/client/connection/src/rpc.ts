@@ -88,12 +88,23 @@ export type ConnectionRequestRejection = 401 | 403 | undefined
 export interface ConnectionIndexRequest extends ConnectionTrustRequest {
   readonly method?: string | undefined
   readonly url?: string | undefined
+  /** TCP peer address used to throttle pairing attempts; absent on synthesized requests. */
+  readonly peerAddress?: string | undefined
 }
 
 /** Root/index response operations owned by the browser-token exchange. */
 export interface ConnectionIndexResponse {
   writeHead(status: number, headers?: Readonly<Record<string, string>>): unknown
   end(body?: string): unknown
+}
+
+/**
+ * Process-local LAN pairing facts the Web runtime announces. The PIN admits one
+ * browser on a configured LAN authority and expires with the process.
+ */
+export interface BrowserPairing {
+  /** Six digits accepted by the pairing route until this process stops. */
+  readonly pin: string
 }
 
 /** Handler invoked after Connection has decoded the transport envelope. */
@@ -190,6 +201,22 @@ export interface HostConnectionHandle {
    * @returns true only when the frontend may serve index.html.
    */
   authorizeIndex(request: ConnectionIndexRequest, response: ConnectionIndexResponse): boolean
+
+  /** Process-local LAN pairing facts, or undefined when no pairing authority is configured. */
+  readonly pairing: BrowserPairing | undefined
+
+  /**
+   * Exchange one submitted LAN pairing PIN for the browser-session cookie.
+   * @param request - pairing request facts including the TCP peer address.
+   * @param pin - submitted six-digit PIN.
+   * @param response - response the exchange owns for every outcome.
+   * @returns false, because the exchange always writes the response.
+   */
+  authorizePairing(
+    request: ConnectionIndexRequest,
+    pin: string,
+    response: ConnectionIndexResponse,
+  ): boolean
 
   /**
    * Add the fresh process token to an ordinary Web application URL.

@@ -363,6 +363,12 @@ export interface ConnectionConfig {
   cookieMaxAgeDays?: number
   /** Maximum buffered JSON body for every `/api` request. Default: 300 MiB. */
   maxRequestBodyBytes?: number
+  /**
+   * LAN pairing: browsers arriving on `authorities` receive the PIN form, and
+   * a submitted PIN mints the same authority-bound cookie as the local token
+   * exchange. An empty or omitted policy leaves `/pair` unregistered.
+   */
+  pairing?: ConnectionPairingConfig
 }
 
 /** Timing for generation readiness and automatic reconnection. */
@@ -381,9 +387,23 @@ export interface ConnectionRecoveryConfig {
   /** Deadline in ms for readiness, including physical connection setup. Default: 15000. */
   generationReadyTimeoutMs?: number
 }
+
+/**
+ * LAN pairing policy: browsers arriving on these authorities receive the PIN
+ * form instead of the 401 response. An empty authority list disables both the
+ * form and the pairing route.
+ */
+export interface ConnectionPairingConfig {
+  /** Authorities whose unauthenticated browsers receive the pairing page. @default [] */
+  authorities: string[]
+  /** Failed submissions from one peer address before lockout. @default 5 */
+  maxFailedAttempts?: number
+  /** Milliseconds one locked peer address stays rejected. @default 300000 */
+  lockoutMilliseconds?: number
+}
 ```
 
-Source: [`packages/client/connection/src/index.ts:72`](../packages/client/connection/src/index.ts)
+Source: [`packages/client/connection/src/index.ts:116`](../packages/client/connection/src/index.ts)
 
 <a id="deepseek-aidsh-client-hmr"></a>
 
@@ -3284,7 +3304,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/bundle/web-app/src/index.ts:44`](../packages/bundle/web-app/src/index.ts)
+Source: [`packages/bundle/web-app/src/index.ts:45`](../packages/bundle/web-app/src/index.ts)
 
 <a id="deepseek-aidsh-web-fetch-http"></a>
 

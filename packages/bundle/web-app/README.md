@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Run `dsh --profile web` to open an interactive browser GUI with chat, model and settings management, and session history. It uses the same model access, tools, and safety defaults as other dsh surfaces. Startup prints an authenticated URL and normally opens it in the default browser; SSH sessions and `--no-open` leave the URL for manual opening. You can change the port and allow extra hosts, but cannot bind all network interfaces. Choose this package for interactive browser work; use `dsh-headless` for one-shot command-line tasks.
+Run `dsh --profile web` to open an interactive browser GUI with chat, model and settings management, and session history. It uses the same model access, tools, and safety defaults as other dsh surfaces. Startup prints an authenticated URL and normally opens it in the default browser; SSH sessions and `--no-open` leave the URL for manual opening. You can change the port, allow extra hosts, and bind all network interfaces to reach the GUI from a phone, which pairs with a temporary PIN. Choose this package for interactive browser work; use `dsh-headless` for one-shot command-line tasks.
 
 ## Table of Contents
 
@@ -51,7 +51,15 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 ### LAN access and trusted hosts
 
-By default the GUI accepts connections from this machine only. A deployment that binds all network interfaces also allows browsers from the LAN, and the printed URL then includes a LAN address; `--trusted-host` adds extra hosts in either case. Host and Origin checks control reachability, while the token exchange authenticates every Host API method and WebSocket stream. The LAN addresses are sampled once at startup, so a network change later is not picked up — restart the GUI to re-advertise.
+By default the GUI accepts connections from this machine only. `--host 0.0.0.0` binds every network interface, discovers the machine's non-internal IPv4 addresses after the server binds, and prints the loopback token URL followed by a clean LAN URL and a six-digit pairing PIN:
+
+```sh
+dsh --profile web --host 0.0.0.0 --port 3081 --no-open
+```
+
+Open the printed LAN URL on the phone and enter the PIN shown beside it. The PIN is process-local and the pairing route rejects at most five failed attempts from one peer address, then locks that address out for five minutes. Only a discovered LAN address receives the pairing form; a successful submission mints the same authority-bound session cookie the local token exchange issues. LAN addresses are sampled once at startup, so a network change later is not picked up — restart the GUI to re-advertise and to mint a new PIN. `--trusted-host` adds extra hosts the `/api` fence accepts in either case.
+
+The listener adds no TLS, so the PIN, the session cookie, and every prompt travel in cleartext over the local network. Use the all-interface bind only on a private network you trust, and keep the port behind the host firewall when the network is not trusted.
 
 ### Running over SSH
 
@@ -81,7 +89,7 @@ The URL line and browser handoff are readiness signals: supervisors RPC as soon 
 
 ### LAN trust sampling
 
-`resolveLanTrust` samples the network once at boot: a loopback bind (`127.0.0.1`) derives no LAN addresses, while an all-interfaces bind adds every non-internal IPv4 literal. The derived literals plus the explicit `--trusted-host` authorities form the `/api` browser-trust fence, and the printed LAN URL always matches that fence.
+`resolveLanTrust` samples the network once at boot: a loopback bind (`127.0.0.1`) derives no LAN addresses, while an all-interfaces bind adds every non-internal IPv4 literal. The derived literals plus the explicit `--trusted-host` authorities form the `/api` browser-trust fence and enable the Connection pairing authorities, and the printed LAN URL always matches that fence.
 
 ### Source map
 
@@ -142,11 +150,11 @@ Source and Web sections follow first-party reusable instructions. Different chec
 These limits tell you what to expect in unusual setups — a source checkout, SSH sessions, or strict networks. They are current package constraints, not a general browser comparison or a task backlog.
 
 - **The frontend must be built** — a source checkout needs `pnpm run build` first; startup stops with a build hint when the dist is missing, and there is no source-serving fallback.
-- **LAN addresses are sampled once at startup** — interface changes after boot are not re-advertised; the printed LAN URL always matches what was sampled.
+- **LAN addresses are sampled once at startup** — interface changes after boot are not re-advertised; the printed LAN URL and pairing PIN stay fixed until the process restarts.
 - **Only the handoff start is observable** — the GUI reports that the browser was asked to open, not that it actually opened; a later browser exit is never reported, and the printed URL is your manual fallback.
 - **SSH sessions keep the URL but skip the browser handoff** — the printed URL names the remote host's loopback endpoint; the SSH client or editor must expose and open the local forwarded address.
 - **`BROWSER` overrides only come from the environment** — a discovered `.env` cannot set `BROWSER`; only an inherited value can choose the executable for the automatic handoff.
-- **Binding all network interfaces is not supported** — `--host 0.0.0.0` is rejected at startup for safety; use the default loopback host.
+- **The LAN listener carries no TLS** — the pairing PIN, the session cookie, and every prompt travel in cleartext over the local network; expose the all-interface bind only on a network you trust.
 
 <a id="dev-note"></a>
 ### Dev Note

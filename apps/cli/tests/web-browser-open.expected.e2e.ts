@@ -12,6 +12,14 @@ const builtBin = join(repoRoot, 'apps/cli/lib/bin.js')
 const frontendIndex = join(repoRoot, 'apps/web/dist/index.html')
 const openerHook = new URL('./fixtures/web-browser-open/register.mjs', import.meta.url).href
 const openingMessage = 'dsh web: opening the default browser; pass --no-open to disable'
+// Ready line of an all-interface bind: the loopback token URL followed by the
+// clean LAN URL and the process pairing PIN, both sharing the bound port.
+const IPv4 = String.raw`\d{1,3}(?:\.\d{1,3}){3}`
+const lanPairingLine = new RegExp(
+  String.raw`^dsh web: (http://127\.0\.0\.1:(?<port>\d+)/\?token=[A-Za-z0-9_-]+)`
+  + String.raw` \(LAN: (?<lan>http://(?<host>${IPv4}):\k<port>); pairing PIN: \d{6}\)$`,
+  'u',
+)
 const tempRoots: string[] = []
 const builtArtifactsExist = existsSync(builtBin) && existsSync(frontendIndex)
 
@@ -94,6 +102,48 @@ describe.skipIf(!builtArtifactsExist)('dsh web browser-open assembled snapshot',
         "stderr": "",
       }
     `)
+  })
+
+  it('announces the clean LAN URL and pairing PIN for an all-interface bind', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-web-lan-pairing-snapshot-'))
+    tempRoots.push(root)
+    // Any runner reaching a network derives at least one non-internal IPv4
+    // authority from the all-interface bind, so the LAN block must appear.
+    const result = await execa(process.execPath, [
+      '--import', openerHook,
+      builtBin,
+      'web',
+      '--host', '0.0.0.0',
+      '--port', '0',
+      '--no-open',
+    ], {
+      cwd: root,
+      env: {
+        ...process.env,
+        DEEPSEEK_API_KEY: 'keyless-lan-pairing-no-call',
+        DSH_AGENTS_HOME: join(root, '.agents'),
+        DSH_BROWSER_OPEN_TEST_EXIT_ON_READY: '1',
+        DSH_HOME: join(root, '.dsh'),
+        DSH_TELEMETRY_DISABLED: '1',
+        NODE_NO_WARNINGS: '1',
+        SSH_CONNECTION: '',
+        SSH_TTY: '',
+      },
+      input: '',
+      timeout: 30_000,
+      killSignal: 'SIGKILL',
+      reject: false,
+    })
+    const readyLine = result.stdout.split(/\r?\n/u).find(line => line.startsWith('dsh web: '))
+    const groups = lanPairingLine.exec(readyLine ?? '')?.groups
+    if (groups === undefined) {
+      throw new Error(`dsh web LAN pairing evidence missing\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`)
+    }
+    expect(result.exitCode).toBe(0)
+    // The phone reaches an interface address, never loopback, and its URL
+    // carries no process token: the PIN is the only credential it submits.
+    expect(groups.host).not.toBe('127.0.0.1')
+    expect(groups.lan).not.toContain('token=')
   })
 
   it('prints the launcher reason and manual URL after the Web app is ready', async () => {

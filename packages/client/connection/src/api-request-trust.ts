@@ -83,6 +83,19 @@ function isTrustedAuthority(hostUrl: URL, trustedHosts: readonly string[]): bool
 }
 
 /**
+ * Whether a request `Host` authority matches one configured entry. The matching
+ * rules are the ones the trust fence applies, so a browser admitted by
+ * `trustedHosts` is the same browser eligible for LAN pairing.
+ * @param authority - the request `Host` value.
+ * @param trustedHosts - configured `host` or `host:port` entries.
+ * @returns true when the authority matches a configured entry.
+ */
+export function isConfiguredAuthority(authority: string, trustedHosts: readonly string[]): boolean {
+  const authorityUrl = parseAuthority(authority)
+  return authorityUrl !== undefined && isTrustedAuthority(authorityUrl, trustedHosts)
+}
+
+/**
  * Decide whether one /api request may reach the RPC bridge.
  * @param request - Node HTTP or Fetch request facts (headers).
  * @param trustedHosts - non-loopback authorities this deployment serves: exact `host:port`, or port-less `host` matching any port.

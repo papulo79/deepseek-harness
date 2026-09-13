@@ -6,7 +6,7 @@ Status: implemented
 
 ## 问题
 
-Web GUI 宿主以纯 loopback HTTP 提供 `/api`（默认 `127.0.0.1:3080`；CLI 拒绝 `--host 0.0.0.0`），而这个面上有远程代码执行级别的方法——`session.prompt` 驱动的 agent（智能体）可以运行 bash。浏览器会用两种经典方式把操作者变成攻击此类本地 API 的「混淆代理人」：恶意页面发出跨站「简单请求」 POST（`text/plain`——不经 CORS 预检即发出），其副作用照常执行、只是响应不可读；以及 DNS rebinding 后的源以「同源」身份直连 socket，CORS 整体失效，只有 `Host` 头会暴露攻击者的域名。在本决策之前，系统里唯一的浏览器信任检查（`isTrustedNativeDialogRequest`：回环 socket、同源、回环 Host）只守着一个装饰性的路由——`host.pickDirectory`，其原生对话框弹在宿主屏幕上——而所有真正具有严重后果的方法都没有防护。按 RPC 逐个设防也活不过应用内目录浏览器：它存在的意义就是服务合法的远程客户端，回环规则恰恰会拒绝它们。
+Web GUI 宿主以纯 HTTP 提供 `/api`（默认 `127.0.0.1:3080`，使用 `--host 0.0.0.0` 时绑定所有接口），而这个面上有远程代码执行级别的方法——`session.prompt` 驱动的 agent（智能体）可以运行 bash。浏览器会用两种经典方式把操作者变成攻击此类本地 API 的「混淆代理人」：恶意页面发出跨站「简单请求」 POST（`text/plain`——不经 CORS 预检即发出），其副作用照常执行、只是响应不可读；以及 DNS rebinding 后的源以「同源」身份直连 socket，CORS 整体失效，只有 `Host` 头会暴露攻击者的域名。在本决策之前，系统里唯一的浏览器信任检查（`isTrustedNativeDialogRequest`：回环 socket、同源、回环 Host）只守着一个装饰性的路由——`host.pickDirectory`，其原生对话框弹在宿主屏幕上——而所有真正具有严重后果的方法都没有防护。按 RPC 逐个设防也活不过应用内目录浏览器：它存在的意义就是服务合法的远程客户端，回环规则恰恰会拒绝它们。
 
 ## 决策
 
@@ -26,6 +26,6 @@ Web GUI 宿主以纯 loopback HTTP 提供 `/api`（默认 `127.0.0.1:3080`；CLI
 ## 后果
 
 - 未来任何 `/api` 方法天然在覆盖范围内；不存在会被遗忘的按路由信任决定。
-- 自定义非 loopback 组合必须信任其服务 authority，否则请求会被拒绝；随后仍像每个 loopback 请求一样满足浏览器认证。随附 CLI 拒绝 `--host 0.0.0.0`；`--trusted-host` 只扩展 Host/Origin 栅栏，绝不授予身份。
+- 自定义非 loopback 组合必须信任其服务 authority，否则请求会被拒绝；随后仍像每个 loopback 请求一样满足浏览器认证。随附 CLI 使用 `--host 0.0.0.0` 时绑定所有接口，并加入 [LAN 移动端配对](2026-09-10-lan-mobile-pairing.zh.md)的 authority 限制、PIN 与对端地址限流；`--trusted-host` 只扩展 Host/Origin 栅栏，绝不授予身份。
 - 客户端必须给 POST 体标注 `application/json`（我们自己的客户端一向如此；裸 fetch 测试补上了该头）。
 - Host 与 Origin 仍只是请求路由证据。进程令牌与签名 cookie 建立每个 Host 方法使用的浏览器身份。
