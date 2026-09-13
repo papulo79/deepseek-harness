@@ -150,7 +150,7 @@ una vez (`pnpm run build`) aunque el código sea idéntico.
 | --- | --- |
 | `GUIDE.md` | Este documento. |
 | `.gitattributes` | Exime a `patches/*.patch` del chequeo de espacios. |
-| `docs/` | Diseño y plan del cambio de LAN pairing, fuera de los gates de producto. |
+| `docs/` | Diseño, plan y guía de uso del cambio de LAN pairing, fuera de los gates de producto. |
 | `sync-upstream.sh` | Trae upstream, rebasa la rama y regenera la serie. |
 | `export-patches.sh` | Regenera `patches/` desde los commits de la rama actual. |
 | `apply-patches.sh` | Aplica `patches/` sobre el commit actual. |
