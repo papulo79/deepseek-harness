@@ -86,6 +86,7 @@ function pairingPolicy(overrides?: Partial<BrowserPairingPolicy>): BrowserPairin
     authorities: ['192.168.1.5'],
     maxFailedAttempts: 5,
     lockoutMilliseconds: 300_000,
+    maxTotalFailedAttempts: 50,
     ...overrides,
   }
 }

@@ -21,6 +21,7 @@ const STORED_SECRET_VERSION = 1
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]*$/
 const PROCESS_LAUNCH_TOKENS = new WeakMap<object, string>()
 const PROCESS_PAIRING_PINS = new WeakMap<object, string>()
+const PROCESS_PAIRING_BUDGETS = new WeakMap<object, { failures: number }>()
 const PAIRING_PIN_DIGITS = 6
 const PAIRING_PIN_LIMIT = 10 ** PAIRING_PIN_DIGITS
 
@@ -32,6 +33,8 @@ export interface BrowserPairingPolicy {
   readonly maxFailedAttempts: number
   /** Milliseconds one locked peer address stays rejected. */
   readonly lockoutMilliseconds: number
+  /** Failed submissions from every peer together before pairing stops until the process exits. */
+  readonly maxTotalFailedAttempts: number
 }
 
 /** One peer address's failed PIN submissions and lock state. */
@@ -89,6 +92,19 @@ function processPairingPin(owner: object): string {
   if (existing !== undefined) return existing
   const created = randomInt(0, PAIRING_PIN_LIMIT).toString().padStart(PAIRING_PIN_DIGITS, '0')
   PROCESS_PAIRING_PINS.set(owner, created)
+  return created
+}
+
+/**
+ * The process's spent pairing guesses. Keyed like the PIN so a Connection hot
+ * reload cannot hand an attacker a fresh budget for a PIN the operator already
+ * read; the count survives until the process exits.
+ */
+function processPairingBudget(owner: object): { failures: number } {
+  const existing = PROCESS_PAIRING_BUDGETS.get(owner)
+  if (existing !== undefined) return existing
+  const created = { failures: 0 }
+  PROCESS_PAIRING_BUDGETS.set(owner, created)
   return created
 }
 
@@ -245,7 +261,11 @@ async function initializeSecret(credentials: CredentialProvider): Promise<Buffer
 export class BrowserAuth {
   private readonly launchToken: string
   private readonly maxAgeMilliseconds: number
-  private readonly pairingState: { policy: BrowserPairingPolicy; pin: string } | undefined
+  private readonly pairingState: {
+    policy: BrowserPairingPolicy
+    pin: string
+    budget: { failures: number }
+  } | undefined
   private readonly pairingAttempts = new Map<string, PairingAttempts>()
 
   private constructor(
@@ -257,7 +277,7 @@ export class BrowserAuth {
     this.launchToken = processLaunchToken(processOwner)
     this.pairingState = policy === undefined
       ? undefined
-      : { policy, pin: processPairingPin(processOwner) }
+      : { policy, pin: processPairingPin(processOwner), budget: processPairingBudget(processOwner) }
     this.maxAgeMilliseconds = maxAgeDays * DAY_MILLISECONDS
     if (!Number.isSafeInteger(this.maxAgeMilliseconds)
       || !Number.isSafeInteger(Date.now() + this.maxAgeMilliseconds)) {
@@ -350,10 +370,13 @@ export class BrowserAuth {
    * peer address locked by earlier failures receives 429 without a PIN check;
    * a wrong PIN extends that peer's failure streak; the correct PIN clears the
    * streak and mints the same authority-bound cookie as the token exchange.
-   * The caller MUST apply the Host/Origin trust fence first: this method admits
-   * any authority the policy names, and the fence is what stops a cross-site
-   * page from spending a peer's attempt budget. The registered `/pair` route is
-   * the only caller.
+   * A process-wide budget bounds the guesses every peer together may spend, so
+   * a fresh source address resets the streak but not the budget: once it is
+   * spent, the correct PIN is refused too and only a process restart reopens
+   * pairing. The caller MUST apply the Host/Origin trust fence first: this
+   * method admits any authority the policy names, and the fence is what stops a
+   * cross-site page from spending a peer's attempt budget. The registered
+   * `/pair` route is the only caller.
    * @param req - pairing request facts including the TCP peer address.
    * @param pin - submitted six-digit PIN.
    * @param res - response this exchange owns for every outcome.
@@ -372,6 +395,10 @@ export class BrowserAuth {
       this.writePairingRejection(res, 401)
       return false
     }
+    if (pairing.budget.failures >= pairing.policy.maxTotalFailedAttempts) {
+      this.writePairingRejection(res, 429)
+      return false
+    }
     const attempts = this.pairingAttempts.get(peer)
     if (attempts !== undefined && attempts.lockedUntil > Date.now()) {
       this.writePairingRejection(res, 429)
@@ -385,6 +412,7 @@ export class BrowserAuth {
       return false
     }
     const failures = (this.pairingAttempts.get(peer)?.failures ?? 0) + 1
+    pairing.budget.failures += 1
     this.pairingAttempts.set(peer, {
       failures,
       lockedUntil: failures >= pairing.policy.maxFailedAttempts
@@ -458,7 +486,7 @@ export class BrowserAuth {
       'content-type': 'text/plain; charset=utf-8',
     })
     res.end(status === 429
-      ? 'too many pairing attempts; wait before trying again.\n'
+      ? 'too many pairing attempts; wait before trying again, or restart dsh web to mint a new PIN.\n'
       : 'dsh web pairing rejected; check the PIN printed by dsh web.\n')
   }
 

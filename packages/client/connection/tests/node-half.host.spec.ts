@@ -596,6 +596,39 @@ describe('connection node half', () => {
     }
   })
 
+  it('stops pairing for every peer once the process-wide failure budget is spent', async () => {
+    const { routes, connection, dispose } = await mounted({
+      trustedHosts: ['192.168.1.5'],
+      pairing: {
+        authorities: ['192.168.1.5'],
+        maxFailedAttempts: 100,
+        lockoutMilliseconds: 60_000,
+        maxTotalFailedAttempts: 2,
+      },
+    })
+    try {
+      const route = routes.find(candidate => candidate.path === '/pair')!
+      const pin = connection.pairing?.pin
+      if (pin === undefined) throw new Error('pairing PIN was not published')
+      const wrong = pin === '000000' ? '111111' : '000000'
+      for (const peer of ['192.168.1.10', '192.168.1.11']) {
+        const denied = fakeResponse()
+        await route.handler(fakePairPost({ host: '192.168.1.5' }, `pin=${wrong}`, peer), denied.response)
+        expect([peer, denied.state.status]).toEqual([peer, 401])
+      }
+      // A third address spends none of its own streak, and the correct PIN is
+      // refused too: only a restart reopens pairing.
+      const exhausted = fakeResponse()
+      await route.handler(
+        fakePairPost({ host: '192.168.1.5' }, `pin=${pin}`, '192.168.1.12'),
+        exhausted.response,
+      )
+      expect(exhausted.state).toMatchObject({ status: 429, headers: { 'cache-control': 'no-store' } })
+    } finally {
+      await dispose()
+    }
+  })
+
   it('rejects an empty or non-numeric PIN and still admits the correct one', async () => {
     const { routes, connection, dispose } = await mounted({
       trustedHosts: ['192.168.1.5'],

@@ -67,6 +67,9 @@ const DEFAULT_MAX_PAIRING_ATTEMPTS = 5
 /** Milliseconds one locked peer address stays rejected. */
 const DEFAULT_PAIRING_LOCKOUT_MILLISECONDS = 300_000
 
+/** Failed PIN submissions from every peer together before pairing stops until restart. */
+const DEFAULT_MAX_PAIRING_TOTAL_ATTEMPTS = 50
+
 /**
  * LAN pairing policy: browsers arriving on these authorities receive the PIN
  * form instead of the 401 response. An empty authority list disables both the
@@ -79,12 +82,19 @@ export interface ConnectionPairingConfig {
   maxFailedAttempts?: number
   /** Milliseconds one locked peer address stays rejected. @default 300000 */
   lockoutMilliseconds?: number
+  /**
+   * Failed submissions from every peer together before pairing stops until the
+   * process restarts. Bounds what a set of source addresses can spend between
+   * them, which a per-peer lockout alone cannot. @default 50
+   */
+  maxTotalFailedAttempts?: number
 }
 
 const ConnectionPairingConfigSchema: z<ConnectionPairingConfig> = z.object({
   authorities: z.array(String).default([]),
   maxFailedAttempts: z.natural().min(1).default(DEFAULT_MAX_PAIRING_ATTEMPTS),
   lockoutMilliseconds: z.natural().min(1).default(DEFAULT_PAIRING_LOCKOUT_MILLISECONDS),
+  maxTotalFailedAttempts: z.natural().min(1).default(DEFAULT_MAX_PAIRING_TOTAL_ATTEMPTS),
 })
 
 /** Resolve a loaded pairing config into the policy BrowserAuth enforces. */
@@ -94,6 +104,7 @@ function resolvePairing(config: ConnectionPairingConfig | undefined): BrowserPai
     authorities: config.authorities,
     maxFailedAttempts: config.maxFailedAttempts ?? DEFAULT_MAX_PAIRING_ATTEMPTS,
     lockoutMilliseconds: config.lockoutMilliseconds ?? DEFAULT_PAIRING_LOCKOUT_MILLISECONDS,
+    maxTotalFailedAttempts: config.maxTotalFailedAttempts ?? DEFAULT_MAX_PAIRING_TOTAL_ATTEMPTS,
   }
 }
 

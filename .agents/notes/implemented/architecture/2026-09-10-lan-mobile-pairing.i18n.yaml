@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.md
-2026-09-10-lan-mobile-pairing.md: 68f8afe9f138dc2b5b372eba77c48b3b1c9c050d
-2026-09-10-lan-mobile-pairing.zh.md: f8a81a553e386e15565989a0212def9ca254d0e0
+2026-09-10-lan-mobile-pairing.md: 22e4fe7b58506393eee54b193bb4c0a6622f4e77
+2026-09-10-lan-mobile-pairing.zh.md: baf35c4db20355777842092b377579ff4cf39187

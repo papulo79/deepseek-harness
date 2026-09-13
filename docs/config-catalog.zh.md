@@ -402,6 +402,12 @@ export interface ConnectionPairingConfig {
   maxFailedAttempts?: number
   /** Milliseconds one locked peer address stays rejected. @default 300000 */
   lockoutMilliseconds?: number
+  /**
+   * Failed submissions from every peer together before pairing stops until the
+   * process restarts. Bounds what a set of source addresses can spend between
+   * them, which a per-peer lockout alone cannot. @default 50
+   */
+  maxTotalFailedAttempts?: number
 }
 ```
 
