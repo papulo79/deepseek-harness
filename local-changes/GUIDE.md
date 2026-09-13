@@ -105,8 +105,11 @@ limpio de upstream, sin el cambio—, el lanzador antiguo lo considera ausente y
 aplica `lan-movil.patch` **sobre master**, lo que ensucia el espejo y te deja
 ejecutando la versión vieja sin avisar. `local-changes/arrancar-web.sh` corrige
 esto: si el cambio falta y existe la rama `local/custom` con el árbol limpio,
-hace `checkout` de esa rama en vez de parchear, y se niega a parchear `master`.
-Además prefiere la serie versionada del repositorio sobre la copia suelta.
+hace `checkout` de esa rama en vez de parchear, y se niega a parchear `master`
+mientras esa rama exista. Cuando no existe —un clon recién hecho— sí aplica
+parches sobre `master`, que es la única vía. Prefiere la serie versionada del
+repositorio sobre la copia suelta y la aplica **entera**, no solo el primer
+parche.
 
 Para instalarlo:
 

@@ -1,5 +1,7 @@
 # Web LAN Pairing Implementation Plan
 
+> **Documento de trabajo histórico.** Este plan describe cómo se implementó el cambio en su momento. El código enviado difiere en cuatro puntos: el canje del PIN ya no se expone en `HostConnectionHandle` (vive en `BrowserAuth` y la ruta `/pair` es su único llamante), el cuerpo debe ser `application/x-www-form-urlencoded` (415 en caso contrario), la política añade `maxTotalFailedAttempts` como presupuesto de proceso, y solo las direcciones privadas, link-local y CGNAT reciben el formulario. La fuente de verdad es `local-changes/patches/`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let a mobile browser on the LAN pair with `dsh web` through a temporary six-digit PIN while retaining authority-bound browser-session cookies and a configurable port.

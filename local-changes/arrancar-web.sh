@@ -3,7 +3,7 @@
 # Arranca DeepSeek Harness en modo red local (móvil) desde esta copia del repo.
 #
 # - Si el cambio LAN no está en el árbol, cambia a la rama local/custom, que es
-#   donde vive versionado; solo reaplica un parche si esa rama no existe.
+#   donde vive versionado; solo reaplica la serie de parches si esa rama no existe.
 # - Nunca aplica el parche sobre master, que se mantiene como espejo de upstream.
 # - Recompila solo cuando cambian las fuentes, el lockfile o el commit de git.
 # - Evita arrancar un segundo `dsh web` sobre el mismo $DSH_HOME (bloqueo de sesión).
@@ -46,7 +46,7 @@ Opciones:
       --abrir        abre también el navegador del ordenador (omite --no-open)
       --sin-build    no comprueba ni ejecuta la compilación
       --solo-build   compila si hace falta y termina, sin arrancar el servicio
-      --sin-parche   no intenta reaplicar el parche
+      --sin-parche   no intenta reaplicar la serie de parches
       --permitir-multi
                      arranca aunque ya haya otro `dsh web` escuchando (puede
                      provocar SessionAlreadyOwnedError en las sesiones activas)
@@ -81,12 +81,17 @@ STARTUP="$REPO/packages/bundle/web-app/src/startup.ts"
 AUTH="$REPO/packages/client/connection/src/browser-auth.ts"
 
 # La serie versionada del propio repo manda sobre la copia suelta de esta
-# carpeta: una sola fuente de verdad para el cambio.
-serie_repo=""
-if compgen -G "$REPO/local-changes/patches/*.patch" >/dev/null 2>&1; then
-  serie_repo="$(ls "$REPO"/local-changes/patches/*.patch | head -1)"
+# carpeta: una sola fuente de verdad para el cambio, y se aplica entera.
+PARCHES=()
+if [ -n "${DSH_PARCHE:-}" ]; then
+  PARCHES=("$DSH_PARCHE")
+elif compgen -G "$REPO/local-changes/patches/*.patch" >/dev/null 2>&1; then
+  while IFS= read -r parche; do
+    PARCHES+=("$parche")
+  done < <(ls "$REPO"/local-changes/patches/*.patch | sort)
+elif [ -f "$DIR_SCRIPT/lan-movil.patch" ]; then
+  PARCHES=("$DIR_SCRIPT/lan-movil.patch")
 fi
-PARCHE="${DSH_PARCHE:-${serie_repo:-$DIR_SCRIPT/lan-movil.patch}}"
 
 # El cambio está presente cuando el CLI deja de rechazar 0.0.0.0 y Connection
 # expone el emparejamiento.
@@ -114,26 +119,32 @@ fi
 
 if cambio_presente; then
   log "cambio LAN presente"
-elif [ "$APLICAR_PARCHE" = 1 ] && [ -f "$PARCHE" ]; then
-  if [ "$(rama_actual)" = master ] && arbol_limpio; then
+elif [ "$APLICAR_PARCHE" = 1 ] && [ "${#PARCHES[@]}" != 0 ]; then
+  # `master` solo se protege donde existe la rama que lleva el cambio: en un
+  # clon sin ella, parchear master es la única vía y es lo que este lanzador
+  # hacía siempre.
+  if [ "$(rama_actual)" = master ] && arbol_limpio \
+     && git -C "$REPO" show-ref --verify --quiet refs/heads/local/custom; then
     error "«master» es un espejo de upstream y no debe acumular cambios locales"
     error "usa la rama que ya contiene el cambio: git -C \"$REPO\" checkout local/custom"
     exit 1
   fi
-  log "el cambio LAN no está aplicado; reaplicando $PARCHE"
-  if ! git -C "$REPO" apply --3way --check "$PARCHE" 2>/dev/null; then
-    error "el parche no se aplica limpio sobre el árbol actual"
-    error "resuelve los conflictos a mano; guía: $DIR_SCRIPT/reaplicar-cambio-lan.md"
-    exit 1
-  fi
-  git -C "$REPO" apply --3way "$PARCHE"
+  log "el cambio LAN no está aplicado; reaplicando ${#PARCHES[@]} parche(s)"
+  for parche in "${PARCHES[@]}"; do
+    if ! git -C "$REPO" apply --3way "$parche"; then
+      error "$(basename "$parche") no se aplica limpio; el árbol puede quedar a medias"
+      error "vuelve atrás con: git -C \"$REPO\" checkout -- . && git -C \"$REPO\" clean -fd"
+      error "guía: $DIR_SCRIPT/reaplicar-cambio-lan.md"
+      exit 1
+    fi
+  done
   if ! cambio_presente; then
-    error "el parche se aplicó pero el cambio LAN sigue sin detectarse"
+    error "los parches se aplicaron pero el cambio LAN sigue sin detectarse"
     exit 1
   fi
-  log "parche reaplicado"
+  log "serie reaplicada"
 else
-  error "el cambio LAN no está aplicado y no se ha reaplicado el parche (--sin-parche o parche ausente)"
+  error "el cambio LAN no está aplicado y no hay serie que reaplicar (--sin-parche o parches ausentes)"
   exit 1
 fi
 
