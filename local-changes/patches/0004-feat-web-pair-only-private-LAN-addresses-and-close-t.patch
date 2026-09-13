@@ -1,0 +1,644 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Pablo=20De=20Andr=C3=A9s?= <pdeandres35@gmail.com>
+Date: Sun, 13 Sep 2026 15:43:26 +0200
+Subject: [PATCH 4/4] feat(web): pair only private LAN addresses and close the
+ review polish
+
+Keep the pairing form off a globally routable interface: the bundle derives
+`pairingAddresses` as the RFC1918, link-local, and CGNAT subset of the sampled
+literals, so an Internet client a public address admits through the fence never
+receives the PIN form. The fence itself keeps every literal it always had.
+
+Reject a `pairing.authorities` entry the fence cannot reach at load, naming the
+misconfiguration, instead of serving a form whose every submission is a 403.
+Report an exhausted process budget once on the console the operator reads.
+Refuse to render the pairing page inside a frame, and share one request-header
+reader between the fence and the browser-auth module.
+
+The Agent Note and both READMEs record the private-only pairing subset, the
+load-time fence rule, and that peer streaks are now bounded by the process
+budget.
+---
+ .../2026-09-10-lan-mobile-pairing.i18n.yaml   |  4 +--
+ .../2026-09-10-lan-mobile-pairing.md          |  4 +--
+ .../2026-09-10-lan-mobile-pairing.zh.md       |  4 +--
+ packages/bundle/web-app/README.i18n.yaml      |  4 +--
+ packages/bundle/web-app/README.md             |  2 +-
+ packages/bundle/web-app/README.zh.md          |  2 +-
+ packages/bundle/web-app/cordis.patch.yml      |  7 ++--
+ packages/bundle/web-app/src/index.ts          | 33 +++++++++++++++--
+ .../web-app/tests/trusted-hosts.spec.ts       | 25 ++++++++++---
+ packages/bundle/web-app/tests/web-app.spec.ts |  8 +++--
+ packages/client/connection/README.i18n.yaml   |  4 +--
+ packages/client/connection/README.md          |  2 +-
+ packages/client/connection/README.zh.md       |  2 +-
+ .../connection/src/api-request-trust.ts       | 36 ++++++++++++++-----
+ .../client/connection/src/browser-auth.ts     | 26 ++++++++------
+ packages/client/connection/src/index.ts       | 25 +++++++++++--
+ .../client/connection/src/request-headers.ts  | 20 +++++++++++
+ .../tests/api-request-trust.host.spec.ts      | 21 ++++++++++-
+ .../tests/browser-auth.host.spec.ts           |  7 +++-
+ .../connection/tests/node-half.host.spec.ts   | 13 +++++--
+ packages/client/connection/tsconfig.host.json |  1 +
+ 21 files changed, 197 insertions(+), 53 deletions(-)
+ create mode 100644 packages/client/connection/src/request-headers.ts
+
+diff --git a/.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.i18n.yaml b/.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.i18n.yaml
+index 28d4cc04c7..cc85f40afb 100644
+--- a/.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.i18n.yaml
++++ b/.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.i18n.yaml
+@@ -2,5 +2,5 @@
+ # side as of the last confirmed-consistent state. Both languages carry equal authority;
+ # after editing either side, bring the other along and re-record with:
+ #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.md
+-2026-09-10-lan-mobile-pairing.md: 22e4fe7b58506393eee54b193bb4c0a6622f4e77
+-2026-09-10-lan-mobile-pairing.zh.md: baf35c4db20355777842092b377579ff4cf39187
++2026-09-10-lan-mobile-pairing.md: 0ea4fca8737583d3d4ea4ab610034e92b7fa32c2
++2026-09-10-lan-mobile-pairing.zh.md: b2b8024e113626eff934c8f7e834d3e130fe397a
+diff --git a/.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.md b/.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.md
+index 22e4fe7b58..0ea4fca873 100644
+--- a/.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.md
++++ b/.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.md
+@@ -12,7 +12,7 @@ The Web GUI began as a loopback-only surface: `dsh web` bound `127.0.0.1`, and t
+ 
+ `dsh web --host 0.0.0.0` is a supported, explicit opt-in. Loopback remains the default, and the CLI adds no host validation of its own: the parsed value reaches the webserver row, whose schemastery `host` literal union is the single validity source, so any other value fails the load loudly. After the server binds, the Web runtime samples the machine's non-internal IPv4 addresses once, adds them to the `/api` Host/Origin fence, and prints them as a clean LAN URL next to a six-digit PIN; the loopback URL keeps the process token and its existing exchange.
+ 
+-`dsh-client-connection` owns pairing because it already owns browser authentication. With `config.pairing.authorities` non-empty it mints one six-digit PIN per process, retained by the root application context across Connection hot reloads, and registers an exact `POST /pair` route. An unauthenticated `GET` for the dist root whose Host matches a pairing authority receives a minimal HTML form containing no PIN; every other unauthenticated index request keeps the plain 401. The route applies the Host/Origin fence first, caps the body at 1024 bytes, requires exactly one `pin` field in an `application/x-www-form-urlencoded` body, and compares it with the existing constant-time comparison. A match mints the same signed, authority-bound cookie as the local token exchange, so a paired phone and the local browser converge on one authentication path. Five failed submissions from one peer address (`maxFailedAttempts`) lock that address out for five minutes (`lockoutMilliseconds`), during which it receives 429 without a PIN check; `maxTotalFailedAttempts` (default 50) failures from every peer together stop pairing until the process restarts, which bounds a peer set that rotates source addresses.
++`dsh-client-connection` owns pairing because it already owns browser authentication. With `config.pairing.authorities` non-empty it mints one six-digit PIN per process, retained by the root application context across Connection hot reloads, and registers an exact `POST /pair` route. An unauthenticated `GET` for the dist root whose Host matches a pairing authority receives a minimal HTML form containing no PIN; every other unauthenticated index request keeps the plain 401. The route applies the Host/Origin fence first, caps the body at 1024 bytes, requires exactly one `pin` field in an `application/x-www-form-urlencoded` body, and compares it with the existing constant-time comparison. A match mints the same signed, authority-bound cookie as the local token exchange, so a paired phone and the local browser converge on one authentication path. Five failed submissions from one peer address (`maxFailedAttempts`) lock that address out for five minutes (`lockoutMilliseconds`), during which it receives 429 without a PIN check; `maxTotalFailedAttempts` (default 50) failures from every peer together stop pairing until the process restarts, which bounds a peer set that rotates source addresses. The Web bundle passes only the private, link-local, and CGNAT subset of the discovered literals as pairing authorities, so an interface holding a globally routable address serves no pairing form to an Internet client.
+ 
+ The Web bundle passes `ctx.webRuntime.lanAddresses` as the pairing authorities, so pairing exists exactly when the CLI bound all interfaces and at least one LAN address was discovered. The Web runtime prints the PIN only when both the LAN URL and `ctx.connection.pairing` exist, and the local token URL is never replaced.
+ 
+@@ -34,4 +34,4 @@ The Web bundle passes `ctx.webRuntime.lanAddresses` as the pairing authorities,
+ 
+ Pairing adds no new authority: a valid PIN yields the same cookie the local token exchange already issues, and an invalid one yields 401 or 429. The PIN is memory-only and expires with the process, so a restart changes it and a network change requires a restart to re-advertise.
+ 
+-The listener still adds no TLS. On an untrusted network the PIN and the session cookie travel in cleartext, so the all-interface bind is an explicit operator risk rather than a hardened remote deployment. Peer state is an unbounded map keyed by source address; a peer cannot cheaply forge source addresses over TCP on a switched LAN, so the bound is the number of distinct peers that reach the port. `--trusted-host` still grants no identity, and the LAN PIN flow does not change the [Host/Origin fence](2026-07-28-api-browser-trust-boundary.md) or the [browser token exchange](2026-08-24-browser-token-authentication.md).
++The listener still adds no TLS. On an untrusted network the PIN and the session cookie travel in cleartext, so the all-interface bind is an explicit operator risk rather than a hardened remote deployment. Peer state is a map keyed by source address and bounded by the process failure budget: every tracked peer spent at least one of those submissions. `--trusted-host` still grants no identity, and the LAN PIN flow does not change the [Host/Origin fence](2026-07-28-api-browser-trust-boundary.md) or the [browser token exchange](2026-08-24-browser-token-authentication.md).
+diff --git a/.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.zh.md b/.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.zh.md
+index baf35c4db2..b2b8024e11 100644
+--- a/.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.zh.md
++++ b/.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.zh.md
+@@ -12,7 +12,7 @@ Web GUI 最初只是 loopback 表层：`dsh web` 绑定 `127.0.0.1`，CLI 直接
+ 
+ `dsh web --host 0.0.0.0` 是受支持且明确的主动选择。loopback 仍是默认值，CLI 本身不添加主机校验：解析出的值直接写入 webserver 配置项，其 schemastery `host` 字面量联合类型是唯一有效性真源，其他任何值都会让加载显式失败。服务器完成绑定后，Web 运行时只采样一次本机所有非 internal 的 IPv4 地址，把它们加入 `/api` 的 Host/Origin 栅栏，并以干净的 LAN URL 加六位 PIN 的形式打印；loopback URL 仍保留进程 token 及其原有交换流程。
+ 
+-`dsh-client-connection` 负责配对，因为它本就负责浏览器认证。当 `config.pairing.authorities` 非空时，它为每个进程生成一个六位 PIN（由根应用上下文持有，可跨 Connection 热重载保留），并注册精确的 `POST /pair` 路由。Host 与配对 authority 匹配、对 dist 根路径发起的未认证 `GET` 会收到一个不含 PIN 的极简 HTML 表单；其他未认证的 index 请求仍得到普通的 401。该路由先应用 Host/Origin 栅栏，把请求体限制在 1024 字节，要求 `application/x-www-form-urlencoded` 请求体中恰好有一个 `pin` 字段，并使用现有的恒定时间比较进行校验。比对成功即签发与本地 token 交换相同的、签名且绑定 authority 的 cookie，因此已配对的手机与本地浏览器汇聚到同一条认证路径。同一对端地址失败五次（`maxFailedAttempts`）后，该地址会被锁定五分钟（`lockoutMilliseconds`），期间收到 429 且不校验 PIN；所有对端合计失败 `maxTotalFailedAttempts` 次（默认 50）后配对会停止，直到进程重启，从而约束轮换源地址的对端集合。
++`dsh-client-connection` 负责配对，因为它本就负责浏览器认证。当 `config.pairing.authorities` 非空时，它为每个进程生成一个六位 PIN（由根应用上下文持有，可跨 Connection 热重载保留），并注册精确的 `POST /pair` 路由。Host 与配对 authority 匹配、对 dist 根路径发起的未认证 `GET` 会收到一个不含 PIN 的极简 HTML 表单；其他未认证的 index 请求仍得到普通的 401。该路由先应用 Host/Origin 栅栏，把请求体限制在 1024 字节，要求 `application/x-www-form-urlencoded` 请求体中恰好有一个 `pin` 字段，并使用现有的恒定时间比较进行校验。比对成功即签发与本地 token 交换相同的、签名且绑定 authority 的 cookie，因此已配对的手机与本地浏览器汇聚到同一条认证路径。同一对端地址失败五次（`maxFailedAttempts`）后，该地址会被锁定五分钟（`lockoutMilliseconds`），期间收到 429 且不校验 PIN；所有对端合计失败 `maxTotalFailedAttempts` 次（默认 50）后配对会停止，直到进程重启，从而约束轮换源地址的对端集合。Web 组合只把探测到的字面量中属于私有、链路本地与 CGNAT 的子集作为配对 authority，因此持有全局可路由地址的网卡不会向互联网客户端提供配对表单。
+ 
+ Web 组合把 `ctx.webRuntime.lanAddresses` 作为配对 authority 传入，因此只有 CLI 绑定了所有接口且至少探测到一个 LAN 地址时才存在配对。仅当 LAN URL 与 `ctx.connection.pairing` 同时存在时，Web 运行时才打印 PIN，并且绝不替换本地 token URL。
+ 
+@@ -34,4 +34,4 @@ Web 组合把 `ctx.webRuntime.lanAddresses` 作为配对 authority 传入，因
+ 
+ 配对不新增任何权限：有效 PIN 得到的 cookie 与本地 token 交换已签发的完全相同，无效 PIN 得到 401 或 429。PIN 只存在于内存并随进程结束而失效，因此重启会改变它，网络变化也需要重启才能重新公告。
+ 
+-监听器仍不提供 TLS。在不可信网络中，PIN 与会话 cookie 以明文传输，因此全接口绑定是操作者明确承担的风险，而不是加固过的远程部署。对端状态是以源地址为键的无界映射；在交换式 LAN 上，对端无法廉价伪造 TCP 源地址，因此其规模上限是能到达该端口的不同对端数量。`--trusted-host` 绝不授予身份，LAN PIN 流程也不改变 [Host/Origin 栅栏](2026-07-28-api-browser-trust-boundary.zh.md)或[浏览器令牌交换](2026-08-24-browser-token-authentication.zh.md)。
++监听器仍不提供 TLS。在不可信网络中，PIN 与会话 cookie 以明文传输，因此全接口绑定是操作者明确承担的风险，而不是加固过的远程部署。对端状态是以源地址为键的映射，其规模受进程失败预算约束：每个被记录的对端都至少消耗了其中一次提交。`--trusted-host` 绝不授予身份，LAN PIN 流程也不改变 [Host/Origin 栅栏](2026-07-28-api-browser-trust-boundary.zh.md)或[浏览器令牌交换](2026-08-24-browser-token-authentication.zh.md)。
+diff --git a/packages/bundle/web-app/README.i18n.yaml b/packages/bundle/web-app/README.i18n.yaml
+index 5421249bbc..2dba41295c 100644
+--- a/packages/bundle/web-app/README.i18n.yaml
++++ b/packages/bundle/web-app/README.i18n.yaml
+@@ -2,5 +2,5 @@
+ # side as of the last confirmed-consistent state. Both languages carry equal authority;
+ # after editing either side, bring the other along and re-record with:
+ #   pnpm run verify-translation-pairing --write packages/bundle/web-app/README.md
+-README.md: d5332a0a1b0e9bb40f210d7ecb68c555b4b6763d
+-README.zh.md: ad8f19759e7f5d409014717a610d42cdfdc14974
++README.md: c591e803ba2a7afc4574483ccd33f8ccd9025a08
++README.zh.md: 80b6eff578f82c73aaf2321ecd1a96feb06a556d
+diff --git a/packages/bundle/web-app/README.md b/packages/bundle/web-app/README.md
+index d5332a0a1b..c591e803ba 100644
+--- a/packages/bundle/web-app/README.md
++++ b/packages/bundle/web-app/README.md
+@@ -89,7 +89,7 @@ The URL line and browser handoff are readiness signals: supervisors RPC as soon
+ 
+ ### LAN trust sampling
+ 
+-`resolveLanTrust` samples the network once at boot: a loopback bind (`127.0.0.1`) derives no LAN addresses, while an all-interfaces bind adds every non-internal IPv4 literal. The derived literals plus the explicit `--trusted-host` authorities form the `/api` browser-trust fence and enable the Connection pairing authorities, and the printed LAN URL always matches that fence.
++`resolveLanTrust` samples the network once at boot: a loopback bind (`127.0.0.1`) derives no LAN addresses, while an all-interfaces bind adds every non-internal IPv4 literal. The derived literals plus the explicit `--trusted-host` authorities form the `/api` browser-trust fence; only the RFC1918, link-local, and CGNAT subset becomes pairing authorities and gets announced, so an interface holding a globally routable address never answers an Internet client with the pairing form. The printed LAN URL always matches that fence.
+ 
+ ### Source map
+ 
+diff --git a/packages/bundle/web-app/README.zh.md b/packages/bundle/web-app/README.zh.md
+index ad8f19759e..80b6eff578 100644
+--- a/packages/bundle/web-app/README.zh.md
++++ b/packages/bundle/web-app/README.zh.md
+@@ -89,7 +89,7 @@ URL 行与浏览器交接都是就绪信号：监督方一观察到该行就发
+ 
+ ### LAN 信任采样
+ 
+-`resolveLanTrust` 在启动时只采样一次网络：loopback 绑定（`127.0.0.1`）不派生任何 LAN 地址，绑定所有网卡则会加入每个非 internal IPv4 字面量。派生字面量加上显式的 `--trusted-host` 权威标识组成 `/api` 浏览器信任栅栏，并启用 Connection 的配对 authority；打印的 LAN URL 始终与该栅栏一致。
++`resolveLanTrust` 在启动时只采样一次网络：loopback 绑定（`127.0.0.1`）不派生任何 LAN 地址，绑定所有网卡则会加入每个非 internal IPv4 字面量。派生字面量加上显式的 `--trusted-host` 权威标识组成 `/api` 浏览器信任栅栏；其中只有 RFC1918、链路本地与 CGNAT 子集会成为配对 authority 并被打印，因此持有全局可路由地址的网卡绝不会向互联网客户端返回配对表单。打印的 LAN URL 始终与该栅栏一致。
+ 
+ ### 源码地图
+ 
+diff --git a/packages/bundle/web-app/cordis.patch.yml b/packages/bundle/web-app/cordis.patch.yml
+index 12f9c0fae2..f71fe66598 100644
+--- a/packages/bundle/web-app/cordis.patch.yml
++++ b/packages/bundle/web-app/cordis.patch.yml
+@@ -186,10 +186,11 @@
+         # A deployment adding authorities keeps this expression and concatenates
+         # its literals, for example: ['app.internal', ...ctx.webRuntime.trustedHosts].
+         trustedHosts: !!js ctx.webRuntime.trustedHosts
+-        # Unauthenticated browsers on a discovered LAN literal receive the PIN
+-        # form; a loopback bind derives no literal and leaves /pair unmounted.
++        # Unauthenticated browsers on a discovered private LAN literal receive
++        # the PIN form; a loopback bind, or an interface whose only address is
++        # globally routable, derives none and leaves /pair unmounted.
+         pairing:
+-          authorities: !!js ctx.webRuntime.lanAddresses
++          authorities: !!js ctx.webRuntime.pairingAddresses
+ 
+     # Raw Blob and ReadableStream uploads run independently of Connection's
+     # RPC and generation service.
+diff --git a/packages/bundle/web-app/src/index.ts b/packages/bundle/web-app/src/index.ts
+index 8fff52f6f3..bc2664ddbc 100644
+--- a/packages/bundle/web-app/src/index.ts
++++ b/packages/bundle/web-app/src/index.ts
+@@ -69,6 +69,13 @@ export const Config: z<Config> = z.object({
+ export interface WebRuntimeValues {
+   /** LAN IPv4 literals sampled once when the server binds all interfaces. */
+   lanAddresses: string[]
++  /**
++   * Subset of `lanAddresses` a phone on the same private network reaches. Only
++   * these become pairing authorities and get announced, so an interface holding
++   * a globally routable address never answers an Internet client with the PIN
++   * form.
++   */
++  pairingAddresses: string[]
+   /** LAN literals followed by explicit invocation authorities. */
+   trustedHosts: string[]
+ }
+@@ -129,7 +136,27 @@ export function resolveLanTrust(bindHost: string, extra: readonly string[]): Web
+       .filter((iface): iface is NonNullable<typeof iface> => iface !== undefined && iface.family === 'IPv4' && !iface.internal)
+       .map(iface => iface.address)
+     : []
+-  return { lanAddresses, trustedHosts: [...lanAddresses, ...extra] }
++  return {
++    lanAddresses,
++    pairingAddresses: lanAddresses.filter(isPrivateIPv4),
++    trustedHosts: [...lanAddresses, ...extra],
++  }
++}
++
++/**
++ * Whether an IPv4 literal belongs to a range a phone on the same local network
++ * reaches: RFC1918 private space, CGNAT (Tailscale and similar overlays), or
++ * link-local. A globally routable address is excluded, so an all-interface bind
++ * on a host with a public address exposes no pairing endpoint to the Internet.
++ * @param address - dotted-quad IPv4 literal.
++ * @returns true for a private, link-local, or CGNAT literal.
++ */
++function isPrivateIPv4(address: string): boolean {
++  return /^10\./u.test(address)
++    || /^172\.(1[6-9]|2\d|3[01])\./u.test(address)
++    || /^192\.168\./u.test(address)
++    || /^169\.254\./u.test(address)
++    || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./u.test(address)
+ }
+ 
+ /** Model-visible orientation and acceptance boundary for sessions created through `dsh web`. */
+@@ -261,8 +288,8 @@ export function apply(ctx: Context, config: Config): void {
+         if (ANNOUNCED_ROOTS.has(connectionCtx.root)) return
+         const webUrl = localWebUrl(connectionCtx)
+         const authenticatedUrl = connectionCtx.connection.authenticatedUrl(webUrl)
+-        // Reuse the exact LAN snapshot provided to the /api trust fence.
+-        const lanCandidate = runtime.lanAddresses[0]
++        // Only a private LAN literal pairs; the clean URL carries no process token.
++        const lanCandidate = runtime.pairingAddresses[0]
+         const port = connectionCtx.webServer.port
+         const pairing = connectionCtx.connection.pairing
+         // The clean LAN URL carries no process token; the PIN admits the phone.
+diff --git a/packages/bundle/web-app/tests/trusted-hosts.spec.ts b/packages/bundle/web-app/tests/trusted-hosts.spec.ts
+index 5972569b0d..dd02fc120f 100644
+--- a/packages/bundle/web-app/tests/trusted-hosts.spec.ts
++++ b/packages/bundle/web-app/tests/trusted-hosts.spec.ts
+@@ -15,20 +15,37 @@ vi.mock('node:os', () => ({
+     en1: [
+       { family: 'IPv4', internal: false, address: '10.0.0.7' },
+     ],
++    en2: [
++      { family: 'IPv4', internal: false, address: '172.16.4.1' },
++      { family: 'IPv4', internal: false, address: '169.254.10.1' },
++    ],
++    en3: [
++      { family: 'IPv4', internal: false, address: '100.64.0.9' },
++      { family: 'IPv4', internal: false, address: '203.0.113.9' },
++    ],
+     utun0: undefined,
+   }),
+ }))
+ 
++const LAN_ADDRESSES = [
++  '192.168.1.5', '10.0.0.7', '172.16.4.1', '169.254.10.1', '100.64.0.9', '203.0.113.9',
++]
++
+ describe('resolveLanTrust', () => {
+   it('samples non-internal IPv4 addresses once for an all-interfaces bind: trust and display share them', () => {
+     const { lanAddresses, trustedHosts } = resolveLanTrust('0.0.0.0', ['harness.internal:3080'])
+-    expect(lanAddresses).toEqual(['192.168.1.5', '10.0.0.7'])
+-    expect(trustedHosts).toEqual(['192.168.1.5', '10.0.0.7', 'harness.internal:3080'])
++    expect(lanAddresses).toEqual(LAN_ADDRESSES)
++    expect(trustedHosts).toEqual([...LAN_ADDRESSES, 'harness.internal:3080'])
++  })
++
++  it('pairs only RFC1918, link-local, and CGNAT literals — a globally routable address never receives the PIN form', () => {
++    expect(resolveLanTrust('0.0.0.0', []).pairingAddresses)
++      .toEqual(['192.168.1.5', '10.0.0.7', '172.16.4.1', '169.254.10.1', '100.64.0.9'])
+   })
+ 
+   it('derives nothing for a loopback bind — extras alone stand, no LAN URL to print', () => {
+-    expect(resolveLanTrust('127.0.0.1', [])).toEqual({ lanAddresses: [], trustedHosts: [] })
++    expect(resolveLanTrust('127.0.0.1', [])).toEqual({ lanAddresses: [], pairingAddresses: [], trustedHosts: [] })
+     expect(resolveLanTrust('127.0.0.1', ['lab.internal']))
+-      .toEqual({ lanAddresses: [], trustedHosts: ['lab.internal'] })
++      .toEqual({ lanAddresses: [], pairingAddresses: [], trustedHosts: ['lab.internal'] })
+   })
+ })
+diff --git a/packages/bundle/web-app/tests/web-app.spec.ts b/packages/bundle/web-app/tests/web-app.spec.ts
+index 591043f8f7..5d90273218 100644
+--- a/packages/bundle/web-app/tests/web-app.spec.ts
++++ b/packages/bundle/web-app/tests/web-app.spec.ts
+@@ -28,6 +28,7 @@ vi.mock('node:os', async importOriginal => ({
+   networkInterfaces: () => ({
+     lo0: [{ family: 'IPv4', internal: true, address: '127.0.0.1' }],
+     en0: [{ family: 'IPv4', internal: false, address: '192.168.1.5' }],
++    en1: [{ family: 'IPv4', internal: false, address: '203.0.113.9' }],
+   }),
+ }))
+ 
+@@ -141,8 +142,9 @@ describe('web-app runtime glue', () => {
+ 
+     expect(seat()).toBeDefined() // frontend-static claimed the fallback
+     expect(ctx.get('webRuntime')).toEqual({
+-      lanAddresses: ['192.168.1.5'],
+-      trustedHosts: ['192.168.1.5', 'lab.internal'],
++      lanAddresses: ['192.168.1.5', '203.0.113.9'],
++      pairingAddresses: ['192.168.1.5'],
++      trustedHosts: ['192.168.1.5', '203.0.113.9', 'lab.internal'],
+     })
+     expect(log).toHaveBeenCalledWith('dsh web: http://127.0.0.1:4567/?token=test-token (LAN: http://192.168.1.5:4567; pairing PIN: 123456)')
+     expect(log).toHaveBeenCalledWith('dsh web: opening the default browser; pass --no-open to disable')
+@@ -152,6 +154,8 @@ describe('web-app runtime glue', () => {
+       'dsh web: opening the default browser; pass --no-open to disable',
+       'open:http://127.0.0.1:4567/?token=test-token',
+     ])
++    // The routable interface is fenced but never announced as a pairing target.
++    expect(lifecycle[0]).not.toContain('203.0.113.9')
+     const assembly = await ctx.systemPrompt.assemble()
+     expect(assembly.sections.find(entry => entry.name === 'harness:source')?.text).toContain('DeepSeek Harness implementation checkout')
+     const section = assembly.sections.find(entry => entry.name === 'app:web-surface')
+diff --git a/packages/client/connection/README.i18n.yaml b/packages/client/connection/README.i18n.yaml
+index 1d82464528..b92838b074 100644
+--- a/packages/client/connection/README.i18n.yaml
++++ b/packages/client/connection/README.i18n.yaml
+@@ -2,5 +2,5 @@
+ # side as of the last confirmed-consistent state. Both languages carry equal authority;
+ # after editing either side, bring the other along and re-record with:
+ #   pnpm run verify-translation-pairing --write packages/client/connection/README.md
+-README.md: 25a3aa0545c2b5ba9c10fb31fe1d5e2da075f406
+-README.zh.md: 8b69f3b03b494ae98f369f06ef72b9f48505ae0e
++README.md: 66d0ce5bcbd6bceb5f0a8a8a3e087b13686df936
++README.zh.md: b56e05f50695310c16f102803afffa66d9472d5b
+diff --git a/packages/client/connection/README.md b/packages/client/connection/README.md
+index 25a3aa0545..66d0ce5bcb 100644
+--- a/packages/client/connection/README.md
++++ b/packages/client/connection/README.md
+@@ -38,7 +38,7 @@ The cookie signing secret is the owner-scoped `client-connection/browser-session
+ 
+ Before authentication, every request still passes `src/api-request-trust.ts`. Its `Host` must be loopback or match a `trustedHosts` entry: exact on `host:port`, any port on port-less entries, both sides WHATWG-normalized. An attached `Origin` must equal that Host and `sec-fetch-site: cross-site` is refused. Malformed configured authorities fail plugin load. These checks defend DNS rebinding and cross-site browser requests; they never establish identity. A failed Host/Origin check returns 403, while a trusted but unauthenticated request returns 401. Decision records: [browser request trust](../../../.agents/notes/implemented/architecture/2026-07-28-api-browser-trust-boundary.md), [browser token authentication](../../../.agents/notes/implemented/architecture/2026-08-24-browser-token-authentication.md), and [LAN mobile pairing](../../../.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.md).
+ 
+-When `config.pairing.authorities` is non-empty, Connection mints one six-digit PIN per process and registers the exact `POST /pair` route. An unauthenticated `GET` for the dist root on a pairing authority receives a minimal HTML form instead of 401, while the local token exchange and the plain 401 response are unchanged. The route applies the Host/Origin fence, caps the body at 1024 bytes, requires exactly one `pin` field in an `application/x-www-form-urlencoded` body, and checks it against the process PIN; a match mints the same authority-bound cookie as the token exchange. `maxFailedAttempts` (default 5) failed submissions from one peer address set `lockoutMilliseconds` (default 300000), during which that address receives 429 without a PIN check. `maxTotalFailedAttempts` (default 50) failed submissions from every peer together stop pairing until the process restarts, so a peer set that rotates source addresses cannot buy unlimited guesses. The form never contains the PIN, and `ctx.connection.pairing` exposes the PIN only to the composing Web runtime, which prints it.
++When `config.pairing.authorities` is non-empty, Connection mints one six-digit PIN per process and registers the exact `POST /pair` route. An unauthenticated `GET` for the dist root on a pairing authority receives a minimal HTML form instead of 401, while the local token exchange and the plain 401 response are unchanged. The route applies the Host/Origin fence, caps the body at 1024 bytes, requires exactly one `pin` field in an `application/x-www-form-urlencoded` body, and checks it against the process PIN; a match mints the same authority-bound cookie as the token exchange. `maxFailedAttempts` (default 5) failed submissions from one peer address set `lockoutMilliseconds` (default 300000), during which that address receives 429 without a PIN check. `maxTotalFailedAttempts` (default 50) failed submissions from every peer together stop pairing until the process restarts, so a peer set that rotates source addresses cannot buy unlimited guesses. A pairing authority the fence cannot reach — one outside `trustedHosts` — fails plugin load, because every submission would be refused. The form never contains the PIN, and `ctx.connection.pairing` exposes the PIN only to the composing Web runtime, which prints it.
+ 
+ <a id="connection-generation"></a>
+ ## Connection generation
+diff --git a/packages/client/connection/README.zh.md b/packages/client/connection/README.zh.md
+index 8b69f3b03b..b56e05f506 100644
+--- a/packages/client/connection/README.zh.md
++++ b/packages/client/connection/README.zh.md
+@@ -38,7 +38,7 @@ cookie 签名密钥是 `ctx.credentials` 中由 `client-connection/browser-sessi
+ 
+ 认证之前，每个请求仍经过 `src/api-request-trust.ts`。其 `Host` 必须是 loopback，或与 `trustedHosts` 条目匹配：带端口的 `host:port` 精确匹配，不带端口的条目匹配任意端口，两侧均经 WHATWG 归一化。若附带 `Origin`，它必须等于该 Host；`sec-fetch-site: cross-site` 一律拒绝。畸形配置 authority 会让插件加载失败。这些检查防御 DNS rebinding 与跨站浏览器请求，绝不建立身份。Host/Origin 校验失败返回 403；Host 可信但未认证的请求返回 401。决策记录：[浏览器请求信任](../../../.agents/notes/implemented/architecture/2026-07-28-api-browser-trust-boundary.zh.md)、[浏览器令牌认证](../../../.agents/notes/implemented/architecture/2026-08-24-browser-token-authentication.zh.md)与 [LAN 移动端配对](../../../.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.zh.md)。
+ 
+-当 `config.pairing.authorities` 非空时，Connection 会为每个进程生成一个六位 PIN，并注册精确的 `POST /pair` 路由。在配对 authority 上对 dist 根路径发起未认证的 `GET` 会收到一个极简 HTML 表单，而不是 401；本地 token 交换与普通 401 响应保持不变。该路由先应用 Host/Origin 栅栏，把请求体限制在 1024 字节，要求 `application/x-www-form-urlencoded` 请求体中恰好有一个 `pin` 字段，并将其与进程 PIN 比对；比对成功即签发与 token 交换相同的、绑定 authority 的 cookie。同一对端地址失败 `maxFailedAttempts` 次（默认 5）后会设置 `lockoutMilliseconds`（默认 300000），在此期间该地址收到 429 且不再校验 PIN。所有对端合计失败 `maxTotalFailedAttempts` 次（默认 50）后，配对会停止，直到进程重启，因此轮换源地址的对端集合无法获得无限次猜测。表单本身从不包含 PIN，`ctx.connection.pairing` 只把 PIN 暴露给负责打印它的组装 Web 运行时。
++当 `config.pairing.authorities` 非空时，Connection 会为每个进程生成一个六位 PIN，并注册精确的 `POST /pair` 路由。在配对 authority 上对 dist 根路径发起未认证的 `GET` 会收到一个极简 HTML 表单，而不是 401；本地 token 交换与普通 401 响应保持不变。该路由先应用 Host/Origin 栅栏，把请求体限制在 1024 字节，要求 `application/x-www-form-urlencoded` 请求体中恰好有一个 `pin` 字段，并将其与进程 PIN 比对；比对成功即签发与 token 交换相同的、绑定 authority 的 cookie。同一对端地址失败 `maxFailedAttempts` 次（默认 5）后会设置 `lockoutMilliseconds`（默认 300000），在此期间该地址收到 429 且不再校验 PIN。所有对端合计失败 `maxTotalFailedAttempts` 次（默认 50）后，配对会停止，直到进程重启，因此轮换源地址的对端集合无法获得无限次猜测。栅栏无法覆盖（即不在 `trustedHosts` 中）的配对 authority 会使插件加载失败，因为每次提交都会被拒绝。表单本身从不包含 PIN，`ctx.connection.pairing` 只把 PIN 暴露给负责打印它的组装 Web 运行时。
+ 
+ <a id="connection-generation"></a>
+ ## Connection generation
+diff --git a/packages/client/connection/src/api-request-trust.ts b/packages/client/connection/src/api-request-trust.ts
+index 10b7c1f04f..8ffebb263f 100644
+--- a/packages/client/connection/src/api-request-trust.ts
++++ b/packages/client/connection/src/api-request-trust.ts
+@@ -14,14 +14,9 @@
+  */
+ 
+ import { isLoopbackHostname } from './loopback-hostname.ts'
++import { requestHeader } from './request-headers.ts'
+ import type { ConnectionTrustRequest } from './rpc.ts'
+ 
+-function header(headers: ConnectionTrustRequest['headers'], name: string): string | undefined {
+-  if (headers instanceof Headers) return headers.get(name) ?? undefined
+-  const value = headers[name]
+-  return typeof value === 'string' ? value : undefined
+-}
+-
+ /** Normalized URL of a Host-header authority (hostname lowercased, default port stripped, IPv6 bracketed), or undefined when unparsable. */
+ function parseAuthority(authority: string): URL | undefined {
+   try {
+@@ -95,6 +90,29 @@ export function isConfiguredAuthority(authority: string, trustedHosts: readonly
+   return authorityUrl !== undefined && isTrustedAuthority(authorityUrl, trustedHosts)
+ }
+ 
++/**
++ * Whether a `pairing.authorities` entry can ever satisfy the fence. A request
++ * matches a port-less entry on any port, so the entry is reachable when it is
++ * loopback or shares its hostname with a `trustedHosts` entry whose port is
++ * open or equal. An entry the fence always refuses would serve a pairing page
++ * whose every submission is a 403, so the owning plugin rejects it at load.
++ * @param entry - configured pairing authority (`host` or `host:port`).
++ * @param trustedHosts - configured fence authorities.
++ * @returns true when both admit one common request authority.
++ */
++export function isReachablePairingAuthority(entry: string, trustedHosts: readonly string[]): boolean {
++  const entryUrl = parseAuthority(entry)
++  if (entryUrl === undefined) return false
++  if (isLoopbackHostname(entryUrl.hostname)) return true
++  const entryPort = canonicalAuthority(entry, entryUrl) === entryUrl.hostname ? undefined : entryUrl.port
++  return trustedHosts.some((trusted) => {
++    const trustedUrl = parseAuthority(trusted)
++    if (trustedUrl === undefined || trustedUrl.hostname !== entryUrl.hostname) return false
++    const trustedPort = canonicalAuthority(trusted, trustedUrl) === trustedUrl.hostname ? undefined : trustedUrl.port
++    return entryPort === undefined || trustedPort === undefined || entryPort === trustedPort
++  })
++}
++
+ /**
+  * Decide whether one /api request may reach the RPC bridge.
+  * @param request - Node HTTP or Fetch request facts (headers).
+@@ -109,19 +127,19 @@ export function isTrustedApiRequest(request: ConnectionTrustRequest, trustedHost
+   // (images and navigations) arrives with neither Origin nor
+   // Fetch-Metadata, indistinguishable from curl, and its response is readable
+   // by the rebound page.
+-  const host = header(request.headers, 'host')
++  const host = requestHeader(request.headers, 'host')
+   if (host === undefined) return false
+   const hostUrl = parseAuthority(host)
+   if (hostUrl === undefined) return false
+   if (!isLoopbackHostname(hostUrl.hostname) && !isTrustedAuthority(hostUrl, trustedHosts)) return false
+   // Cross-site fence: modern browsers label the initiator relationship on
+   // every fetch; an explicit cross-site marker is refused regardless of Origin.
+-  if (header(request.headers, 'sec-fetch-site') === 'cross-site') return false
++  if (requestHeader(request.headers, 'sec-fetch-site') === 'cross-site') return false
+   // Origin fence: when a browser attaches an Origin it must be exactly this
+   // authority (compared through the same normalization as the Host). Absent
+   // Origin is fine — the Host fence above already bound the request. The
+   // literal "null" (sandboxed iframes, file: pages) is an opaque origin, refused.
+-  const origin = header(request.headers, 'origin')
++  const origin = requestHeader(request.headers, 'origin')
+   if (origin === undefined) return true
+   try {
+     return new URL(origin).host === hostUrl.host
+diff --git a/packages/client/connection/src/browser-auth.ts b/packages/client/connection/src/browser-auth.ts
+index f69934802c..7170b457f4 100644
+--- a/packages/client/connection/src/browser-auth.ts
++++ b/packages/client/connection/src/browser-auth.ts
+@@ -4,6 +4,7 @@ import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from
+ import { credentialKey } from '@deepseek-ai/dsh-credentials'
+ import type { CredentialProvider, CredentialRecord } from '@deepseek-ai/dsh-credentials'
+ import { isConfiguredAuthority } from './api-request-trust.ts'
++import { requestHeader } from './request-headers.ts'
+ import type {
+   BrowserPairing,
+   ConnectionIndexRequest,
+@@ -108,18 +109,9 @@ function processPairingBudget(owner: object): { failures: number } {
+   return created
+ }
+ 
+-function header(
+-  headers: ConnectionTrustRequest['headers'],
+-  name: string,
+-): string | undefined {
+-  if (headers instanceof Headers) return headers.get(name) ?? undefined
+-  const value = headers[name]
+-  return typeof value === 'string' ? value : undefined
+-}
+-
+ /** Canonical request authority used as the cookie name and signed audience. */
+ function requestAuthority(headers: ConnectionTrustRequest['headers']): string | undefined {
+-  const host = header(headers, 'host')
++  const host = requestHeader(headers, 'host')
+   if (host === undefined) return undefined
+   try {
+     return new URL(`http://${host}`).host
+@@ -309,6 +301,16 @@ export class BrowserAuth {
+     return this.pairingState === undefined ? undefined : { pin: this.pairingState.pin }
+   }
+ 
++  /**
++   * Whether the process-wide pairing budget is spent, so every further
++   * submission answers 429 until the process restarts. The composing runtime
++   * reads this to report the exhausted state once on its own console.
++   */
++  get pairingBudgetExhausted(): boolean {
++    const pairing = this.pairingState
++    return pairing !== undefined && pairing.budget.failures >= pairing.policy.maxTotalFailedAttempts
++  }
++
+   /**
+    * Add this process's launch token to the ordinary application root URL.
+    * @param baseUrl - canonical browser origin without credentials.
+@@ -430,7 +432,7 @@ export class BrowserAuth {
+    */
+   isAuthenticated(request: ConnectionTrustRequest): boolean {
+     const authority = requestAuthority(request.headers)
+-    const rawCookie = header(request.headers, 'cookie')
++    const rawCookie = requestHeader(request.headers, 'cookie')
+     if (authority === undefined || rawCookie === undefined) return false
+     const value = cookieValue(rawCookie, cookieName(authority))
+     if (value === undefined) return false
+@@ -476,6 +478,8 @@ export class BrowserAuth {
+     res.writeHead(200, {
+       'cache-control': 'no-store',
+       'content-type': 'text/html; charset=utf-8',
++      'referrer-policy': 'no-referrer',
++      'x-frame-options': 'DENY',
+     })
+     res.end(PAIRING_PAGE)
+   }
+diff --git a/packages/client/connection/src/index.ts b/packages/client/connection/src/index.ts
+index e50e6ddba0..d293c904f8 100644
+--- a/packages/client/connection/src/index.ts
++++ b/packages/client/connection/src/index.ts
+@@ -8,7 +8,7 @@ import type {} from '@deepseek-ai/dsh-credentials'
+ import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
+ import { API_PATH } from './api-path.ts'
+ import { bridge, DEFAULT_MAX_REQUEST_BODY_BYTES } from './http-bridge.ts'
+-import { assertTrustedAuthority, isTrustedApiRequest } from './api-request-trust.ts'
++import { assertTrustedAuthority, isReachablePairingAuthority, isTrustedApiRequest } from './api-request-trust.ts'
+ import { BrowserAuth, type BrowserPairingPolicy } from './browser-auth.ts'
+ import { HostConnectionService } from './rpc-host.ts'
+ import { ConnectionRecoveryConfigSchema, resolveConnectionConfig, type ConnectionRecoveryConfig } from './recovery-config.ts'
+@@ -177,7 +177,17 @@ export async function apply(ctx: Context, config?: ConnectionConfig): Promise<vo
+   // silently authorizing its hostname prefix at request time.
+   for (const entry of trustedHosts) assertTrustedAuthority(entry)
+   if (pairing !== undefined) {
+-    for (const entry of pairing.authorities) assertTrustedAuthority(entry)
++    for (const entry of pairing.authorities) {
++      assertTrustedAuthority(entry)
++      // Config boundary: a pairing authority the fence always refuses would
++      // serve a form whose every submission is a 403.
++      if (!isReachablePairingAuthority(entry, trustedHosts)) {
++        throw new Error(
++          `client-connection: pairing authority ${JSON.stringify(entry)} is outside trustedHosts, `
++          + 'so the fence would refuse every pairing submission',
++        )
++      }
++    }
+   }
+   assertImageBodyCapacity(ctx, maxRequestBodyBytes)
+   const browserAuth = await BrowserAuth.create(ctx.root, ctx.credentials, cookieMaxAgeDays, pairing)
+@@ -203,10 +213,19 @@ export async function apply(ctx: Context, config?: ConnectionConfig): Promise<vo
+     }
+     webCtx.effect(() => webCtx.webServer.register(route), 'client-connection: /api route')
+     if (pairing !== undefined) {
++      let exhaustedReported = false
+       const pairingRoute: WebRoute = {
+         kind: 'exact',
+         path: PAIRING_PATH,
+-        handler: (req, res) => handlePairingSubmission(browserAuth, trustedHosts, req, res),
++        handler: (req, res) => {
++          // The operator reads this console, not the phone that is being
++          // refused, so an exhausted budget is reported once here.
++          if (!exhaustedReported && browserAuth.pairingBudgetExhausted) {
++            exhaustedReported = true
++            webCtx.logger.warn('client-connection: LAN pairing stopped for this process; restart dsh web to mint a new PIN')
++          }
++          return handlePairingSubmission(browserAuth, trustedHosts, req, res)
++        },
+       }
+       webCtx.effect(
+         () => webCtx.webServer.register(pairingRoute),
+diff --git a/packages/client/connection/src/request-headers.ts b/packages/client/connection/src/request-headers.ts
+new file mode 100644
+index 0000000000..c2ffde1ddc
+--- /dev/null
++++ b/packages/client/connection/src/request-headers.ts
+@@ -0,0 +1,20 @@
++/** One reader for the two request-header representations the Host carrier sees. */
++
++import type { ConnectionTrustRequest } from './rpc.ts'
++
++/**
++ * Read one request header from either an undici `Headers` map or a Node
++ * incoming-header bag. Node repeats a duplicated header as an array, which this
++ * reader treats as absent: every caller wants one authority or one cookie.
++ * @param headers - request headers in either representation.
++ * @param name - lower-case header name.
++ * @returns the header value, or undefined when absent or repeated.
++ */
++export function requestHeader(
++  headers: ConnectionTrustRequest['headers'],
++  name: string,
++): string | undefined {
++  if (headers instanceof Headers) return headers.get(name) ?? undefined
++  const value = headers[name]
++  return typeof value === 'string' ? value : undefined
++}
+diff --git a/packages/client/connection/tests/api-request-trust.host.spec.ts b/packages/client/connection/tests/api-request-trust.host.spec.ts
+index 359a461e94..4f5d7436cb 100644
+--- a/packages/client/connection/tests/api-request-trust.host.spec.ts
++++ b/packages/client/connection/tests/api-request-trust.host.spec.ts
+@@ -1,12 +1,31 @@
+ /** Behavior of the /api browser-trust fence (rebinding + cross-site defense). */
+ 
+ import { describe, expect, it } from 'vitest'
+-import { assertTrustedAuthority, isTrustedApiRequest } from '../src/api-request-trust.ts'
++import { assertTrustedAuthority, isReachablePairingAuthority, isTrustedApiRequest } from '../src/api-request-trust.ts'
+ 
+ function request(headers: Record<string, string | undefined>): { headers: Record<string, string | undefined> } {
+   return { headers }
+ }
+ 
++describe('isReachablePairingAuthority', () => {
++  it('admits a pairing authority the fence reaches on some port', () => {
++    expect(isReachablePairingAuthority('192.168.1.5', ['192.168.1.5'])).toBe(true)
++    expect(isReachablePairingAuthority('192.168.1.5', ['192.168.1.5:3081'])).toBe(true)
++    expect(isReachablePairingAuthority('192.168.1.5:3081', ['192.168.1.5'])).toBe(true)
++    expect(isReachablePairingAuthority('192.168.1.5:3081', ['192.168.1.5:3081'])).toBe(true)
++    // Loopback is admitted by the fence without a trustedHosts entry.
++    expect(isReachablePairingAuthority('localhost', ['harness.internal'])).toBe(true)
++  })
++
++  it('refuses a pairing authority no fenced request can match', () => {
++    expect(isReachablePairingAuthority('192.168.1.5', ['10.0.0.7'])).toBe(false)
++    expect(isReachablePairingAuthority('192.168.1.5:3081', ['192.168.1.5:3082'])).toBe(false)
++    expect(isReachablePairingAuthority('192.168.1.5', [])).toBe(false)
++    expect(isReachablePairingAuthority('192.168.1.5', [''])).toBe(false)
++    expect(isReachablePairingAuthority('', ['192.168.1.5'])).toBe(false)
++  })
++})
++
+ describe('isTrustedApiRequest', () => {
+   it('holds markerless requests to the same Host fence — a plain-HTTP browser read carries no markers', () => {
+     // Over plain HTTP a browser attaches neither Origin nor Fetch-Metadata to
+diff --git a/packages/client/connection/tests/browser-auth.host.spec.ts b/packages/client/connection/tests/browser-auth.host.spec.ts
+index 3af5d1fca4..ffee97b3a0 100644
+--- a/packages/client/connection/tests/browser-auth.host.spec.ts
++++ b/packages/client/connection/tests/browser-auth.host.spec.ts
+@@ -280,7 +280,12 @@ describe('BrowserAuth', () => {
+     expect(auth.authorizeIndex(request('/', LAN_AUTHORITY, { peerAddress: LAN_PEER }), page.value)).toBe(false)
+     expect(page.state).toMatchObject({
+       status: 200,
+-      headers: { 'cache-control': 'no-store', 'content-type': 'text/html; charset=utf-8' },
++      headers: {
++        'cache-control': 'no-store',
++        'content-type': 'text/html; charset=utf-8',
++        'referrer-policy': 'no-referrer',
++        'x-frame-options': 'DENY',
++      },
+     })
+     expect(page.state.body).toContain('<form method="post" action="/pair">')
+     expect(page.state.body).toContain('name="pin"')
+diff --git a/packages/client/connection/tests/node-half.host.spec.ts b/packages/client/connection/tests/node-half.host.spec.ts
+index 980af3ebb3..f32b82d314 100644
+--- a/packages/client/connection/tests/node-half.host.spec.ts
++++ b/packages/client/connection/tests/node-half.host.spec.ts
+@@ -661,8 +661,8 @@ describe('connection node half', () => {
+     expect(routes).toHaveLength(0)
+   })
+ 
+-  it('defaults the pairing policy, disables it when empty, and rejects a malformed authority', async () => {
+-    const defaults = await mounted({ pairing: { authorities: ['192.168.1.5'] } })
++  it('defaults the pairing policy, disables it when empty, and rejects a malformed or unfenced authority', async () => {
++    const defaults = await mounted({ trustedHosts: ['192.168.1.5'], pairing: { authorities: ['192.168.1.5'] } })
+     expect(defaults.routes.map(route => route.path)).toEqual([API_PATH, '/pair'])
+     expect(defaults.connection.pairing?.pin).toMatch(/^\d{6}$/u)
+     await defaults.dispose()
+@@ -678,6 +678,15 @@ describe('connection node half', () => {
+     await expect(apply(ctx, { pairing: { authorities: ['harness.internal/path'] } }))
+       .rejects.toThrow(/not a bare host\[:port\] authority/)
+     expect(ctx.get('connection')).toBeUndefined()
++
++    const unfenced = new Context()
++    provideBrowserCredentials(unfenced)
++    unfenced.provide('webServer', fakeHttpServer([], []) as WebServer)
++    await expect(apply(unfenced, {
++      trustedHosts: ['192.168.1.5'],
++      pairing: { authorities: ['10.0.0.9'] },
++    })).rejects.toThrow(/is outside trustedHosts/)
++    expect(unfenced.get('connection')).toBeUndefined()
+   })
+ })
+ 
+diff --git a/packages/client/connection/tsconfig.host.json b/packages/client/connection/tsconfig.host.json
+index f58ca85848..5daf4183a1 100644
+--- a/packages/client/connection/tsconfig.host.json
++++ b/packages/client/connection/tsconfig.host.json
+@@ -13,6 +13,7 @@
+     "src/index.ts",
+     "src/loopback-hostname.ts",
+     "src/recovery-config.ts",
++    "src/request-headers.ts",
+     "src/rpc-host.ts",
+     "src/rpc-schema.ts",
+     "src/rpc.ts"
