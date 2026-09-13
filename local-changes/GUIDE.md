@@ -29,6 +29,18 @@ Los cambios incluidos hoy:
   `local-changes/docs/2026-09-10-web-lan-pairing.md` y nota de arquitectura
   en `.agents/notes/implemented/architecture/2026-09-10-lan-mobile-pairing.md`.
 
+## En otra máquina
+
+La rama por defecto del fork es `master`, así que un clon aterriza en upstream
+limpio. Cambia a la rama de trabajo y arranca:
+
+```sh
+git clone git@github.com:papulo79/deepseek-harness.git
+cd deepseek-harness
+git checkout local/custom
+./local-changes/arrancar-web.sh      # instala dependencias y compila si faltan
+```
+
 ## Actualizar desde upstream
 
 ```sh
