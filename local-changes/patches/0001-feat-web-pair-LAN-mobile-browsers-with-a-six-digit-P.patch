@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Pablo=20De=20Andr=C3=A9s?= <pdeandres35@gmail.com>
 Date: Sun, 13 Sep 2026 15:13:40 +0200
-Subject: [PATCH 1/4] feat(web): pair LAN mobile browsers with a six-digit PIN
+Subject: [PATCH 1/5] feat(web): pair LAN mobile browsers with a six-digit PIN
 
 `dsh web --host 0.0.0.0` now serves a pairing page to mobile browsers on the
 local network, so the Web GUI opens from a phone without putting the opaque
