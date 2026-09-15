@@ -83,7 +83,7 @@ Si no aparece el bloque `LAN`, el servidor escuchó en loopback o no encontró n
 
 1. Abre en el móvil la URL `http://<IP-LAN>:<PUERTO>` que aparece en el bloque `LAN`.
 2. La primera visita muestra una página mínima de emparejamiento. Escribe el PIN de seis dígitos y envía el formulario.
-3. El servidor responde con una cookie de sesión firmada y ligada a esa authority, y te redirige a la raíz limpia. A partir de ahí el móvil funciona como el navegador local.
+3. El servidor responde con una cookie de sesión firmada y ligada a esa authority, y te redirige a la raíz limpia. A partir de ahí el móvil funciona como el navegador local, incluidos los ajustes: carga y escribe el mismo `$DSH_HOME/settings.yaml`, así que puedes configurar proveedores, modelos y plugins desde el teléfono.
 
 El PIN vive solo en memoria y cambia al reiniciar el proceso. Tras cinco intentos fallidos desde la misma dirección de origen, esa dirección queda bloqueada cinco minutos; y cuando se agotan los 50 intentos fallidos de **todos** los pares juntos, el emparejamiento se detiene hasta reiniciar el proceso, para que rotar direcciones no dé conjeturas ilimitadas. El aviso aparece en la consola del servidor.
 
@@ -91,6 +91,7 @@ El PIN vive solo en memoria y cambia al reiniciar el proceso. Tras cinco intento
 
 - No hay TLS. El PIN y la cookie de sesión viajan en claro por la red local. Úsalo solo en una red privada de confianza; si la red no es de confianza, limita el puerto con el cortafuegos del ordenador.
 - El cambio no añade exposición a Internet, proxy inverso ni autenticación más allá de la sesión de navegador existente.
+- Un móvil emparejado comparte los ajustes del escritorio: ambos leen y escriben el mismo `$DSH_HOME/settings.yaml` (y las mismas credenciales). Cualquier cambio de proveedor o modelo hecho desde el teléfono afecta también al ordenador, y viceversa. La única acción que sigue siendo solo del escritorio es abrir el fichero de ajustes en el editor nativo.
 - Las direcciones LAN se muestrean una sola vez al arrancar. Si cambia la red o la IP, reinicia el proceso para volver a anunciar la URL y generar un PIN nuevo.
 
 ## Problemas frecuentes

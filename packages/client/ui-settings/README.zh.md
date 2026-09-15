@@ -92,9 +92,9 @@ kind: "package-reference"
 <a id="known-limitations-and-deferred-work"></a>
 
 
-这些限制说明设置传输层够不到的地方；它们是当前包约束。
+这些限制是本包当前的约束。
 
-- **非 loopback 页面没有持久化设置**：本 Client 在那里禁用 Host 持久化，因此 scope 以 `unavailable` 起步且从不跨线路；尽管 Connection 认证覆盖 API，它支撑的每一行仍在那里无效。
+- **每个 DSH home 只有一份 settings 文档**：一个 Host 的每个已认证浏览器都编辑同一份 `$DSH_HOME/settings.yaml`，因此配对后的 LAN 浏览器与回环页面共享同一份文档；只有 Host 文档动作仍仅限回环（ui-settings-general）。
 
 <a id="dev-note"></a>
 ### 开发备注

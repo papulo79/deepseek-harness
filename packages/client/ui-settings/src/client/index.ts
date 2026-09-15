@@ -54,8 +54,12 @@ export const inject = ['remote', 'remote.settings']
 export function apply(ctx: Context): void {
   const schema = new SettingsSchemaService(ctx)
   // Resolved once here, where `remote` is declared in this plugin's own
-  // `inject`; the binder hands the same answer to every scope it binds.
-  const persistence = ctx.remote.$host.isLoopback ? 'host' : 'memory'
+  // `inject`; the binder hands the same answer to every scope it binds. The
+  // dist root and `/api` share one browser-session check, so a page that
+  // loaded is authenticated to this Host whatever authority serves it: Host
+  // persistence follows that authentication, and `isLoopback` keeps gating the
+  // Host document action in ui-settings-general.
+  const persistence: 'host' | 'memory' = 'host'
   const mirror = new SettingsDescribeMirror(ctx, persistence)
   ctx.effect(() => {
     const disposers = [
