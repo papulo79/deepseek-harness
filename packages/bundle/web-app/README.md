@@ -57,7 +57,7 @@ By default the GUI accepts connections from this machine only. `--host 0.0.0.0` 
 dsh --profile web --host 0.0.0.0 --port 3081 --no-open
 ```
 
-Open the printed LAN URL on the phone and enter the PIN shown beside it. The PIN is process-local and the pairing route rejects at most five failed attempts from one peer address, then locks that address out for five minutes. Only a discovered LAN address receives the pairing form; a successful submission mints the same authority-bound session cookie the local token exchange issues. LAN addresses are sampled once at startup, so a network change later is not picked up — restart the GUI to re-advertise and to mint a new PIN. `--trusted-host` adds extra hosts the `/api` fence accepts in either case.
+Open the printed LAN URL on the phone and enter the PIN shown beside it. The PIN is process-local and the pairing route rejects at most five failed attempts from one peer address, then locks that address out for five minutes. Only a discovered LAN address receives the pairing form; a successful submission mints the same authority-bound session cookie the local token exchange issues. A paired browser reads and writes the same Host settings document as the loopback page, so model and plugin configuration applies to both. LAN addresses are sampled once at startup, so a network change later is not picked up — restart the GUI to re-advertise and to mint a new PIN. `--trusted-host` adds extra hosts the `/api` fence accepts in either case.
 
 The listener adds no TLS, so the PIN, the session cookie, and every prompt travel in cleartext over the local network. Use the all-interface bind only on a private network you trust, and keep the port behind the host firewall when the network is not trusted.
 

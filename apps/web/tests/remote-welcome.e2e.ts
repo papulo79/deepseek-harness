@@ -1,8 +1,11 @@
-// Trusted non-loopback Web access cannot call the loopback-only settings API;
-// the notice therefore advances for this browser process and returns on reload.
+// A trusted non-loopback Web page authenticates to the same Host session as the
+// loopback page, so its acknowledgement lands in the Host settings document and
+// the notice stays dismissed across a reload.
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
   acknowledgeReloadConnectionLoss, launchWebScaffold, watchConsole, webSnapshotMode,
   WELCOME_NOTICE_COPY,
@@ -38,7 +41,7 @@ describe.skipIf(MODE === 'record')('web e2e: remote welcome notice', () => {
     await scaffold?.close()
   })
 
-  it('advances process-locally and presents the notice again after reload', async () => {
+  it('writes the acknowledgement to the Host and keeps the notice dismissed after reload', async () => {
     const welcome = page.getByRole('dialog', { name: WELCOME_NOTICE_COPY.zh.title })
     await welcome.waitFor({ timeout: 15_000 })
     expect(await page.locator('#root').evaluate(root => (root as HTMLElement).inert)).toBe(true)
@@ -53,7 +56,13 @@ describe.skipIf(MODE === 'record')('web e2e: remote welcome notice', () => {
     const reloadWarnings = tripwire.warnings.length
     await page.reload({ waitUntil: 'load' })
     acknowledgeReloadConnectionLoss(tripwire, reloadWarnings)
-    await welcome.waitFor({ timeout: 15_000 })
+    await page.waitForSelector('#root', { timeout: 30_000 })
+    // The durable Host section answers this reload, so the notice does not return.
+    expect(await welcome.count()).toBe(0)
+    await vi.waitFor(async () => {
+      expect(await readFile(join(scaffold.harnessHome, 'settings.yaml'), 'utf8'))
+        .toContain('welcomeNoticeVersion')
+    })
     expect(tripwire.warnings).toEqual([])
     expect(tripwire.pageErrors).toEqual([])
   }, 60_000)

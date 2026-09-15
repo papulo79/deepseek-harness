@@ -92,9 +92,9 @@ None; this package neither assembles nor sends a provider request.
 <a id="known-limitations-and-deferred-work"></a>
 
 
-These limits define where the settings transport cannot reach; they are current package constraints.
+These limits are current package constraints.
 
-- **Non-loopback pages get no durable settings** — this Client keeps Host persistence disabled there, so a scope starts `unavailable` and never crosses the wire; every row it backs is inert even though Connection authentication covers the API.
+- **One settings document per DSH home** — every authenticated browser of a Host edits the same `$DSH_HOME/settings.yaml`, so a paired LAN browser and the loopback page share one document; only the Host document action stays loopback-only (ui-settings-general).
 
 <a id="dev-note"></a>
 ### Dev Note

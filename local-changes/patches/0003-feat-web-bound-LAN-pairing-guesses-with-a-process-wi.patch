@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Pablo=20De=20Andr=C3=A9s?= <pdeandres35@gmail.com>
 Date: Sun, 13 Sep 2026 15:35:07 +0200
-Subject: [PATCH 3/4] feat(web): bound LAN pairing guesses with a process-wide
+Subject: [PATCH 3/5] feat(web): bound LAN pairing guesses with a process-wide
  budget
 
 A per-peer lockout alone leaves the six-digit PIN guessable by a peer set that

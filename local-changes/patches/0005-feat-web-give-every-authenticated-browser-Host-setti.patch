@@ -1,0 +1,874 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Pablo=20De=20Andr=C3=A9s?= <pdeandres35@gmail.com>
+Date: Tue, 15 Sep 2026 06:38:37 +0200
+Subject: [PATCH 5/5] feat(web): give every authenticated browser Host settings
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Resolve settings persistence from the browser session instead of the page
+authority. The dist root and `/api` share one browser-session check, so a page
+that loaded — loopback or LAN-paired — already authenticated to this Host.
+Selecting memory mode off-loopback left the Models page failing with
+"settings are unavailable in this browser", the Plugins section with no
+configurable namespace, and theme, locale, and onboarding preferences
+process-local.
+
+`ui-settings` now resolves `host` unconditionally. The memory mode stays the
+mechanism's other value for a composition that wants process-local
+preferences, and `isLoopback` keeps gating the native Host document action in
+ui-settings-general.
+
+The apply specs of ui-settings, ui-theme, ui-settings-general, and
+ui-settings-models pin the new composition, the remote-welcome web e2e now
+asserts the acknowledgement reaches the durable document and survives a
+reload, and the Agent Note records the superseded locality rule.
+---
+ ...tings-for-authenticated-browsers.i18n.yaml |  6 ++++
+ ...ost-settings-for-authenticated-browsers.md | 31 +++++++++++++++++++
+ ...-settings-for-authenticated-browsers.zh.md | 31 +++++++++++++++++++
+ ...8-06-host-backed-web-preferences.i18n.yaml |  4 +--
+ .../2026-08-06-host-backed-web-preferences.md |  4 +--
+ ...26-08-06-host-backed-web-preferences.zh.md |  4 +--
+ apps/web/tests/remote-welcome.e2e.ts          | 19 +++++++++---
+ packages/bundle/web-app/README.i18n.yaml      |  4 +--
+ packages/bundle/web-app/README.md             |  2 +-
+ packages/bundle/web-app/README.zh.md          |  2 +-
+ packages/client/locale/README.i18n.yaml       |  4 +--
+ packages/client/locale/README.md              |  4 +--
+ packages/client/locale/README.zh.md           |  4 +--
+ .../client/ui-agent-preset/README.i18n.yaml   |  4 +--
+ packages/client/ui-agent-preset/README.md     |  2 +-
+ packages/client/ui-agent-preset/README.zh.md  |  2 +-
+ .../ui-settings-general/README.i18n.yaml      |  4 +--
+ packages/client/ui-settings-general/README.md |  4 +--
+ .../client/ui-settings-general/README.zh.md   |  4 +--
+ .../tests/apply.client.spec.ts                | 10 +++---
+ .../ui-settings-models/README.i18n.yaml       |  4 +--
+ packages/client/ui-settings-models/README.md  |  2 +-
+ .../client/ui-settings-models/README.zh.md    |  2 +-
+ .../ui-settings-models/src/client/index.ts    |  4 +--
+ .../src/client/welcome-store.ts               | 10 +++---
+ .../tests/apply.client.spec.ts                | 20 +++++++++---
+ packages/client/ui-settings/README.i18n.yaml  |  4 +--
+ packages/client/ui-settings/README.md         |  4 +--
+ packages/client/ui-settings/README.zh.md      |  4 +--
+ .../client/ui-settings/src/client/index.ts    |  8 +++--
+ .../src/client/settings-contract.ts           |  4 +--
+ .../ui-settings/src/client/settings-mirror.ts |  5 +--
+ .../ui-settings/src/client/settings-scope.ts  |  3 +-
+ .../ui-settings/tests/plugin.client.spec.ts   |  9 +++++-
+ packages/client/ui-theme/README.i18n.yaml     |  4 +--
+ packages/client/ui-theme/README.md            |  8 ++---
+ packages/client/ui-theme/README.zh.md         |  8 ++---
+ .../ui-theme/tests/apply.client.spec.ts       | 23 ++++++++------
+ 38 files changed, 192 insertions(+), 83 deletions(-)
+ create mode 100644 .agents/notes/implemented/architecture/2026-09-15-host-settings-for-authenticated-browsers.i18n.yaml
+ create mode 100644 .agents/notes/implemented/architecture/2026-09-15-host-settings-for-authenticated-browsers.md
+ create mode 100644 .agents/notes/implemented/architecture/2026-09-15-host-settings-for-authenticated-browsers.zh.md
+
+diff --git a/.agents/notes/implemented/architecture/2026-09-15-host-settings-for-authenticated-browsers.i18n.yaml b/.agents/notes/implemented/architecture/2026-09-15-host-settings-for-authenticated-browsers.i18n.yaml
+new file mode 100644
+index 0000000000..5c46460c0a
+--- /dev/null
++++ b/.agents/notes/implemented/architecture/2026-09-15-host-settings-for-authenticated-browsers.i18n.yaml
+@@ -0,0 +1,6 @@
++# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
++# side as of the last confirmed-consistent state. Both languages carry equal authority;
++# after editing either side, bring the other along and re-record with:
++#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-15-host-settings-for-authenticated-browsers.md
++2026-09-15-host-settings-for-authenticated-browsers.md: d23af4d8bbcb2d79e8c0f25bf716fa5a99fef732
++2026-09-15-host-settings-for-authenticated-browsers.zh.md: fe0299f1ee8fbb7e2e4b514d49d643b17fd60964
+diff --git a/.agents/notes/implemented/architecture/2026-09-15-host-settings-for-authenticated-browsers.md b/.agents/notes/implemented/architecture/2026-09-15-host-settings-for-authenticated-browsers.md
+new file mode 100644
+index 0000000000..d23af4d8bb
+--- /dev/null
++++ b/.agents/notes/implemented/architecture/2026-09-15-host-settings-for-authenticated-browsers.md
+@@ -0,0 +1,31 @@
++# Agent Note: Host settings for every authenticated browser
++
++Status: implemented
++
++English | [中文](2026-09-15-host-settings-for-authenticated-browsers.zh.md)
++
++## Problem
++
++The Web client resolved Host persistence from page locality: `ui-settings` read `ctx.remote.$host.isLoopback` and selected `'memory'` for every other authority. The dist root and `/api` share one browser-session check, so a page that loaded at all had already authenticated to this Host; locality was never the authentication signal the gate implied. A browser admitted by LAN PIN pairing ([LAN mobile pairing](2026-09-10-lan-mobile-pairing.md)) therefore received a terminally unavailable settings mirror: the Models page failed with `settings are unavailable in this browser`, the Plugins section offered no configurable namespace, and theme, locale, and onboarding-acknowledgement preferences stayed process-local even though the API served them.
++
++## Decision
++
++`dsh-client-ui-settings` resolves `persistence: 'host'` unconditionally. Host persistence follows the browser session that read the page, not the authority that served it. The `'memory'` mode stays the mechanism's other value — the mirror, the scope controller, and the welcome store keep their memory branches for a composition that genuinely wants every preference process-local — but no shipped composition selects it. `isLoopback` loses exactly one consumer: the native Host document action in `ui-settings-general` stays loopback-only, because opening a file in the Host desktop editor is locality-dependent.
++
++The earlier [Host-backed preferences decision](../bug-fix/2026-08-06-host-backed-web-preferences.md) chose the locality gate for non-loopback pages; this note supersedes that part of it and leaves the rest in force.
++
++## Verification
++
++`packages/client/ui-settings/tests/plugin.client.spec.ts` pins that a non-loopback `$host` still reads the Host document, and the apply specs of `ui-theme`, `ui-settings-general`, and `ui-settings-models` pin that a non-loopback page loads and writes Host settings. The memory-mode mechanism keeps direct coverage in `settings-mirror.client.spec.ts`, `settings-scope.client.spec.ts`, and `welcome-store.client.spec.ts`.
++
++## Alternatives considered
++
++**Treat a paired LAN page as loopback.** Rejected: `connection.isLoopback` answers whether the carrier reaches the local Host, and the pairing flow grants no such identity. Widening it would also expose the locality-dependent native document opener to a phone.
++
++**Add a paired/trusted-remote fact to the connection ready frame.** Rejected: the settings document is already gated by the same browser session as `/api`, so the extra wire fact would restate what every loaded page proves, and it would change the handshake both faces and the SDKs carry.
++
++**Keep a per-host opt-in for remote settings.** Rejected: the only non-loopback composition is the explicit `--host 0.0.0.0` opt-in with PIN pairing, so a second switch would add a configuration state with no current consumer.
++
++## Consequences
++
++A LAN-paired browser edits the same `$DSH_HOME/settings.yaml` the loopback page reads, including the provider sections the Models page writes, and its theme, locale, and onboarding acknowledgement survive a reload. The operator-facing consequence is that any browser holding a valid session on this Host can change the durable model configuration, exactly as it can already prompt sessions that run tools. Only the native Host document action remains unavailable off-loopback.
+diff --git a/.agents/notes/implemented/architecture/2026-09-15-host-settings-for-authenticated-browsers.zh.md b/.agents/notes/implemented/architecture/2026-09-15-host-settings-for-authenticated-browsers.zh.md
+new file mode 100644
+index 0000000000..fe0299f1ee
+--- /dev/null
++++ b/.agents/notes/implemented/architecture/2026-09-15-host-settings-for-authenticated-browsers.zh.md
+@@ -0,0 +1,31 @@
++# Agent Note: 面向每个已认证浏览器的 Host 设置
++
++Status: implemented
++
++[English](2026-09-15-host-settings-for-authenticated-browsers.md) | 中文
++
++## 问题
++
++Web 客户端按页面位置决定 Host 持久化：`ui-settings` 读取 `ctx.remote.$host.isLoopback`，并对其他任何 authority 选择 `'memory'`。dist 根路径与 `/api` 共用同一道浏览器会话校验，因此任何能加载出来的页面都已对本 Host 完成认证；位置从来不是这道闸门所暗示的认证信号。经 LAN PIN 配对（[LAN 移动端配对](2026-09-10-lan-mobile-pairing.zh.md)）获准的浏览器因而拿到一个终态不可用的 settings 镜像：Models 页面报 `settings are unavailable in this browser`，Plugins 分区提供不出任何可配置 namespace，theme、locale 与引导确认偏好也停留在进程内——尽管 API 本身会服务它们。
++
++## 决策
++
++`dsh-client-ui-settings` 无条件解析为 `persistence: 'host'`。Host 持久化跟随读取页面的浏览器会话，而不是服务该页面的 authority。`'memory'` 仍是该机制的另一取值：镜像、scope 控制器与 welcome store 都保留各自的内存分支，供真正想让全部偏好留在进程内的组合使用，但没有随附组合选择它。`isLoopback` 恰好失去一个使用方：`ui-settings-general` 中打开 Host 原生文档的操作仍仅限回环，因为在 Host 桌面编辑器中打开文件本身就是位置相关的行为。
++
++更早的 [Host 支撑的偏好决策](../bug-fix/2026-08-06-host-backed-web-preferences.zh.md)为非 loopback 页面选定了位置闸门；本笔记取代其中该部分，其余部分继续有效。
++
++## 验证
++
++`packages/client/ui-settings/tests/plugin.client.spec.ts` 固定了非 loopback 的 `$host` 仍会读取 Host 文档；`ui-theme`、`ui-settings-general` 与 `ui-settings-models` 的 apply 规格固定了非 loopback 页面会加载并写入 Host 设置。内存模式机制仍在 `settings-mirror.client.spec.ts`、`settings-scope.client.spec.ts` 与 `welcome-store.client.spec.ts` 中直接受测。
++
++## 曾考虑的替代方案
++
++**把配对后的 LAN 页面当作回环。** 否决：`connection.isLoopback` 回答的是载体是否抵达本地 Host，而配对流程不授予这种身份。放宽它还会把位置相关的原生文档打开操作暴露给手机。
++
++**在连接 ready 帧中新增 paired／trusted-remote 事实。** 否决：settings 文档已由与 `/api` 相同的浏览器会话把关，因此这一额外的 wire 事实只会重述每个已加载页面已证明的事情，并且会改动两个 face 与两个 SDK 共同承载的握手。
++
++**保留按 Host 的远程设置开关。** 否决：唯一的非 loopback 组合就是带 PIN 配对的显式 `--host 0.0.0.0` 选项，再加一个开关只会引入一个当前没有消费方的配置状态。
++
++## 后果
++
++配对后的 LAN 浏览器会编辑与回环页面相同的 `$DSH_HOME/settings.yaml`，包括 Models 页面写入的提供方分节，其 theme、locale 与引导确认也会跨刷新保留。对操作者的影响是：任何在本 Host 上持有有效会话的浏览器都能修改持久化模型配置，正如它本就能驱动会运行工具的会话。只有 Host 原生文档操作在非回环下仍不可用。
+diff --git a/.agents/notes/implemented/bug-fix/2026-08-06-host-backed-web-preferences.i18n.yaml b/.agents/notes/implemented/bug-fix/2026-08-06-host-backed-web-preferences.i18n.yaml
+index 1183d9cdc2..444fb3ba36 100644
+--- a/.agents/notes/implemented/bug-fix/2026-08-06-host-backed-web-preferences.i18n.yaml
++++ b/.agents/notes/implemented/bug-fix/2026-08-06-host-backed-web-preferences.i18n.yaml
+@@ -2,5 +2,5 @@
+ # side as of the last confirmed-consistent state. Both languages carry equal authority;
+ # after editing either side, bring the other along and re-record with:
+ #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-08-06-host-backed-web-preferences.md
+-2026-08-06-host-backed-web-preferences.md: 4ccd5cfe092e01fb266d51d5fc84b7cf1556214c
+-2026-08-06-host-backed-web-preferences.zh.md: fbfdda432821eba1d32cab781340fd5f7802c61d
++2026-08-06-host-backed-web-preferences.md: b6fc2d00f4b7771e1f7ae5c98544cc1a142236ee
++2026-08-06-host-backed-web-preferences.zh.md: 7437edf40d922d86cc4634cdb5f4df42ed8b61c2
+diff --git a/.agents/notes/implemented/bug-fix/2026-08-06-host-backed-web-preferences.md b/.agents/notes/implemented/bug-fix/2026-08-06-host-backed-web-preferences.md
+index 4ccd5cfe09..b6fc2d00f4 100644
+--- a/.agents/notes/implemented/bug-fix/2026-08-06-host-backed-web-preferences.md
++++ b/.agents/notes/implemented/bug-fix/2026-08-06-host-backed-web-preferences.md
+@@ -18,7 +18,7 @@ The owning Host halves register three schemas: optional `locale.preference` (`zh
+ 
+ User changes update the live service synchronously and queue a `settings.mutate` path operation through `scope.set`. The scope serializes gestures, sends the latest known namespace revision as `expectedRevision`, records every successful revision, and lets only the latest write settlement republish live state. A rejected or failed latest write reloads Host state. Disposal rejects new work, skips queued operations, suppresses publication by the in-flight operation, and waits for that operation to settle before the plugin reaches quiescence.
+ 
+-The Client keeps Host persistence disabled on non-loopback pages, so their preferences remain process-local even though Connection authenticates the complete API. Dynamic third-party theme ids remain in-process extensions outside the built-in Host schema; removing one resets the live registry without replacing the last durable built-in preference.
++The Client disables Host persistence only for a composition that resolves memory mode; every authenticated browser — loopback or LAN-paired — uses it, so page locality does not change the transport ([later decision](../architecture/2026-09-15-host-settings-for-authenticated-browsers.md)). Dynamic third-party theme ids remain in-process extensions outside the built-in Host schema; removing one resets the live registry without replacing the last durable built-in preference.
+ 
+ ## Alternatives considered
+ 
+@@ -36,7 +36,7 @@ The Client keeps Host persistence disabled on non-loopback pages, so their prefe
+ 
+ ## Consequences
+ 
+-Appearance, Language, and busy-Enter choices follow the DSH user home across reloads, ports, and loopback origins. Direct edits to `settings.yaml` converge through the existing invalidation stream, while legacy `dsh.theme`, `dsh.locale`, and `dsh.conversation.busyEnter` entries are neither read nor written.
++Appearance, Language, and busy-Enter choices follow the DSH user home across reloads, ports, and authenticated origins. Direct edits to `settings.yaml` converge through the existing invalidation stream, while legacy `dsh.theme`, `dsh.locale`, and `dsh.conversation.busyEnter` entries are neither read nor written.
+ 
+ Boot may briefly show the domain default before the background read settles. A transient read failure keeps that default or the last good in-process value; reconnect retries. A write rejection can visibly restore the durable preference after the immediate local change.
+ 
+diff --git a/.agents/notes/implemented/bug-fix/2026-08-06-host-backed-web-preferences.zh.md b/.agents/notes/implemented/bug-fix/2026-08-06-host-backed-web-preferences.zh.md
+index fbfdda4328..7437edf40d 100644
+--- a/.agents/notes/implemented/bug-fix/2026-08-06-host-backed-web-preferences.zh.md
++++ b/.agents/notes/implemented/bug-fix/2026-08-06-host-backed-web-preferences.zh.md
+@@ -18,7 +18,7 @@ Web 的 Appearance、Language 和繁忙态 Enter 偏好原本存在浏览器 `lo
+ 
+ 用户变更会同步更新实时服务，并经 `scope.set` 将一项 `settings.mutate` 路径操作排入队列。scope 会串行处理手势，以最新已知 namespace revision 作为 `expectedRevision` 发送，记录每次成功写入的 revision，并且只允许最新写入的结算结果重新发布实时状态。最新写入被拒或失败时，scope 会重新加载 Host 状态。插件释放会拒绝新工作、跳过已排队操作、抑制运行中操作发布状态，并等待该操作结算后才让插件达到完全停稳。
+ 
+-Client 在非 loopback 页面禁用 Host 持久化，因此这些页面的偏好仍只保留在进程内，尽管 Connection 认证完整 API。动态第三方主题 id 仍是内置 Host schema 之外的进程内扩展；移除其中一个会重置实时注册表，但不会替换上一个持久化的内置偏好。
++Client 只在组合解析为内存模式时禁用 Host 持久化；每个已认证浏览器——回环或经 LAN 配对——都会使用它，因此页面位置不改变该传输（[后续决策](../architecture/2026-09-15-host-settings-for-authenticated-browsers.zh.md)）。动态第三方主题 id 仍是内置 Host schema 之外的进程内扩展；移除其中一个会重置实时注册表，但不会替换上一个持久化的内置偏好。
+ 
+ ## 曾考虑的替代方案
+ 
+@@ -36,7 +36,7 @@ Client 在非 loopback 页面禁用 Host 持久化，因此这些页面的偏好
+ 
+ ## 后果
+ 
+-Appearance、Language 和繁忙态 Enter 选择会跟随 DSH 用户 home，跨越重新加载、端口与回环 origin。直接编辑 `settings.yaml` 所产生的变更会通过现有失效流收敛，而旧的 `dsh.theme`、`dsh.locale` 和 `dsh.conversation.busyEnter` 条目既不会被读取，也不会被写入。
++Appearance、Language 和繁忙态 Enter 选择会跟随 DSH 用户 home，跨越重新加载、端口与已认证 origin。直接编辑 `settings.yaml` 所产生的变更会通过现有失效流收敛，而旧的 `dsh.theme`、`dsh.locale` 和 `dsh.conversation.busyEnter` 条目既不会被读取，也不会被写入。
+ 
+ 启动时可能会在后台读取结算前短暂显示领域默认值。短暂的读取失败会保留该默认值或上一个正确的进程内值；重连时会重试。写入被拒时，界面可能会在本地值立即变化后明显恢复为持久化偏好。
+ 
+diff --git a/apps/web/tests/remote-welcome.e2e.ts b/apps/web/tests/remote-welcome.e2e.ts
+index b7b013dc2d..c88bde817c 100644
+--- a/apps/web/tests/remote-welcome.e2e.ts
++++ b/apps/web/tests/remote-welcome.e2e.ts
+@@ -1,8 +1,11 @@
+-// Trusted non-loopback Web access cannot call the loopback-only settings API;
+-// the notice therefore advances for this browser process and returns on reload.
++// A trusted non-loopback Web page authenticates to the same Host session as the
++// loopback page, so its acknowledgement lands in the Host settings document and
++// the notice stays dismissed across a reload.
++import { readFile } from 'node:fs/promises'
++import { join } from 'node:path'
+ import type { Browser, Page } from 'playwright'
+ import { chromium } from 'playwright'
+-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
++import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+ import {
+   acknowledgeReloadConnectionLoss, launchWebScaffold, watchConsole, webSnapshotMode,
+   WELCOME_NOTICE_COPY,
+@@ -38,7 +41,7 @@ describe.skipIf(MODE === 'record')('web e2e: remote welcome notice', () => {
+     await scaffold?.close()
+   })
+ 
+-  it('advances process-locally and presents the notice again after reload', async () => {
++  it('writes the acknowledgement to the Host and keeps the notice dismissed after reload', async () => {
+     const welcome = page.getByRole('dialog', { name: WELCOME_NOTICE_COPY.zh.title })
+     await welcome.waitFor({ timeout: 15_000 })
+     expect(await page.locator('#root').evaluate(root => (root as HTMLElement).inert)).toBe(true)
+@@ -53,7 +56,13 @@ describe.skipIf(MODE === 'record')('web e2e: remote welcome notice', () => {
+     const reloadWarnings = tripwire.warnings.length
+     await page.reload({ waitUntil: 'load' })
+     acknowledgeReloadConnectionLoss(tripwire, reloadWarnings)
+-    await welcome.waitFor({ timeout: 15_000 })
++    await page.waitForSelector('#root', { timeout: 30_000 })
++    // The durable Host section answers this reload, so the notice does not return.
++    expect(await welcome.count()).toBe(0)
++    await vi.waitFor(async () => {
++      expect(await readFile(join(scaffold.harnessHome, 'settings.yaml'), 'utf8'))
++        .toContain('welcomeNoticeVersion')
++    })
+     expect(tripwire.warnings).toEqual([])
+     expect(tripwire.pageErrors).toEqual([])
+   }, 60_000)
+diff --git a/packages/bundle/web-app/README.i18n.yaml b/packages/bundle/web-app/README.i18n.yaml
+index 2dba41295c..fec37abac9 100644
+--- a/packages/bundle/web-app/README.i18n.yaml
++++ b/packages/bundle/web-app/README.i18n.yaml
+@@ -2,5 +2,5 @@
+ # side as of the last confirmed-consistent state. Both languages carry equal authority;
+ # after editing either side, bring the other along and re-record with:
+ #   pnpm run verify-translation-pairing --write packages/bundle/web-app/README.md
+-README.md: c591e803ba2a7afc4574483ccd33f8ccd9025a08
+-README.zh.md: 80b6eff578f82c73aaf2321ecd1a96feb06a556d
++README.md: 2785b40da3568b50fb907e4c9cb1b39ad8e126b5
++README.zh.md: e1d37801a0364cadffa75483c6abeedeaf05c5c5
+diff --git a/packages/bundle/web-app/README.md b/packages/bundle/web-app/README.md
+index c591e803ba..2785b40da3 100644
+--- a/packages/bundle/web-app/README.md
++++ b/packages/bundle/web-app/README.md
+@@ -57,7 +57,7 @@ By default the GUI accepts connections from this machine only. `--host 0.0.0.0`
+ dsh --profile web --host 0.0.0.0 --port 3081 --no-open
+ ```
+ 
+-Open the printed LAN URL on the phone and enter the PIN shown beside it. The PIN is process-local and the pairing route rejects at most five failed attempts from one peer address, then locks that address out for five minutes. Only a discovered LAN address receives the pairing form; a successful submission mints the same authority-bound session cookie the local token exchange issues. LAN addresses are sampled once at startup, so a network change later is not picked up — restart the GUI to re-advertise and to mint a new PIN. `--trusted-host` adds extra hosts the `/api` fence accepts in either case.
++Open the printed LAN URL on the phone and enter the PIN shown beside it. The PIN is process-local and the pairing route rejects at most five failed attempts from one peer address, then locks that address out for five minutes. Only a discovered LAN address receives the pairing form; a successful submission mints the same authority-bound session cookie the local token exchange issues. A paired browser reads and writes the same Host settings document as the loopback page, so model and plugin configuration applies to both. LAN addresses are sampled once at startup, so a network change later is not picked up — restart the GUI to re-advertise and to mint a new PIN. `--trusted-host` adds extra hosts the `/api` fence accepts in either case.
+ 
+ The listener adds no TLS, so the PIN, the session cookie, and every prompt travel in cleartext over the local network. Use the all-interface bind only on a private network you trust, and keep the port behind the host firewall when the network is not trusted.
+ 
+diff --git a/packages/bundle/web-app/README.zh.md b/packages/bundle/web-app/README.zh.md
+index 80b6eff578..e1d37801a0 100644
+--- a/packages/bundle/web-app/README.zh.md
++++ b/packages/bundle/web-app/README.zh.md
+@@ -57,7 +57,7 @@ dsh --profile web --no-open --port 8080
+ dsh --profile web --host 0.0.0.0 --port 3081 --no-open
+ ```
+ 
+-在手机上打开打印出的 LAN URL，输入旁边的 PIN。PIN 只在当前进程内有效；配对路由对同一对端地址最多接受五次失败尝试，随后将该地址锁定五分钟。只有被探测到的 LAN 地址会收到配对表单；提交成功后签发的会话 cookie 与本地 token 交换所用的、绑定 authority 的 cookie 完全相同。LAN 地址只在启动时采样一次，因此之后的网络变化不会被感知——重启 GUI 以重新公告并生成新的 PIN。`--trusted-host` 在两种情况下都能为 `/api` 栅栏添加额外主机。
++在手机上打开打印出的 LAN URL，输入旁边的 PIN。PIN 只在当前进程内有效；配对路由对同一对端地址最多接受五次失败尝试，随后将该地址锁定五分钟。只有被探测到的 LAN 地址会收到配对表单；提交成功后签发的会话 cookie 与本地 token 交换所用的、绑定 authority 的 cookie 完全相同。配对后的浏览器与回环页面读写同一份 Host settings 文档，因此模型与插件配置对两者同时生效。LAN 地址只在启动时采样一次，因此之后的网络变化不会被感知——重启 GUI 以重新公告并生成新的 PIN。`--trusted-host` 在两种情况下都能为 `/api` 栅栏添加额外主机。
+ 
+ 监听器不提供 TLS，PIN、会话 cookie 以及所有提示都会以明文经过本地网络。只在你信任的私有网络中使用全接口绑定；当网络不可信时，请用宿主机防火墙限制该端口。
+ 
+diff --git a/packages/client/locale/README.i18n.yaml b/packages/client/locale/README.i18n.yaml
+index 14b3339b26..d47af2cea2 100644
+--- a/packages/client/locale/README.i18n.yaml
++++ b/packages/client/locale/README.i18n.yaml
+@@ -2,5 +2,5 @@
+ # side as of the last confirmed-consistent state. Both languages carry equal authority;
+ # after editing either side, bring the other along and re-record with:
+ #   pnpm run verify-translation-pairing --write packages/client/locale/README.md
+-README.md: 56a9cff9c3ec18dcc395378fcd1691207c022284
+-README.zh.md: 1b7a7b7de48843961f3cbac3f4ee99cff641d212
++README.md: 06b5acb3e9093628f7bc98d56d3bfaca8302c7be
++README.zh.md: d583aa86e7042bfc30fecb10d7b3ba203c2fe733
+diff --git a/packages/client/locale/README.md b/packages/client/locale/README.md
+index 56a9cff9c3..06b5acb3e9 100644
+--- a/packages/client/locale/README.md
++++ b/packages/client/locale/README.md
+@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
+ 
+ ## Summary
+ 
+-Use `dsh-client-locale` to switch the web GUI between the shipped English and Chinese locales or languages added by client plugins. User selections take effect immediately; loopback pages persist them in `$DSH_HOME/settings.yaml`, while non-loopback pages keep them only for the current process. New browsers use the first supported language requested by the browser until an allowed stored preference arrives. Plugin authors add typed namespace dictionaries and translate through the public locale API; slot-rendered copy updates without a reload.
++Use `dsh-client-locale` to switch the web GUI between the shipped English and Chinese locales or languages added by client plugins. User selections take effect immediately and persist in `$DSH_HOME/settings.yaml`. New browsers use the first supported language requested by the browser until an allowed stored preference arrives. Plugin authors add typed namespace dictionaries and translate through the public locale API; slot-rendered copy updates without a reload.
+ 
+ ## Table of Contents
+ 
+@@ -61,7 +61,7 @@ An external id is a non-empty ASCII BCP 47-style tag. Its fallback must already
+ 
+ ### What the Host half does
+ 
+-The Host persists the preference through the settings service on loopback pages. The Client deliberately withholds that settings scope on non-loopback pages, so their locale selection remains process-local even though Connection authenticates every API method.
++The Host persists the preference through the settings service. Every authenticated browser binds that settings scope, so a LAN-paired page and the loopback page share one selection.
+ 
+ -----
+ 
+diff --git a/packages/client/locale/README.zh.md b/packages/client/locale/README.zh.md
+index 1b7a7b7de4..d583aa86e7 100644
+--- a/packages/client/locale/README.zh.md
++++ b/packages/client/locale/README.zh.md
+@@ -9,7 +9,7 @@ kind: "package-reference"
+ 
+ ## 概述
+ 
+-使用 `dsh-client-locale` 可在 web GUI 中切换内置的英文和中文 locale，或 client 插件添加的语言。用户选择会立即生效；loopback 页面把选择持久化到 `$DSH_HOME/settings.yaml`，非 loopback 页面则只为当前进程保留选择。全新浏览器会使用浏览器请求的第一个受支持语言，直到允许读取的已存储偏好到达。插件作者可添加类型化命名空间字典，并通过公开 locale API 翻译；经 slot 渲染的文案无需重新加载即可随语言切换更新。
++使用 `dsh-client-locale` 可在 web GUI 中切换内置的英文和中文 locale，或 client 插件添加的语言。用户选择会立即生效，并持久化到 `$DSH_HOME/settings.yaml`。全新浏览器会使用浏览器请求的第一个受支持语言，直到允许读取的已存储偏好到达。插件作者可添加类型化命名空间字典，并通过公开 locale API 翻译；经 slot 渲染的文案无需重新加载即可随语言切换更新。
+ 
+ ## 目录
+ 
+@@ -61,7 +61,7 @@ export function apply(ctx) {
+ 
+ ### Host 半侧做什么
+ 
+-Host 通过 settings 服务为 loopback 页面持久化偏好。Client 会刻意拒绝非 loopback 页面使用该 settings scope，因此即使 Connection 认证所有 API 方法，它们的 locale 选择仍只存在于进程内。
++Host 通过 settings 服务持久化偏好。每个已认证浏览器都会绑定该 settings scope，因此配对后的 LAN 页面与回环页面共享同一个选择。
+ 
+ -----
+ 
+diff --git a/packages/client/ui-agent-preset/README.i18n.yaml b/packages/client/ui-agent-preset/README.i18n.yaml
+index a6ca005fdf..000b7ac32f 100644
+--- a/packages/client/ui-agent-preset/README.i18n.yaml
++++ b/packages/client/ui-agent-preset/README.i18n.yaml
+@@ -2,5 +2,5 @@
+ # side as of the last confirmed-consistent state. Both languages carry equal authority;
+ # after editing either side, bring the other along and re-record with:
+ #   pnpm run verify-translation-pairing --write packages/client/ui-agent-preset/README.md
+-README.md: 476d0a351896835b4f92372c4a62854f2162a6e1
+-README.zh.md: fa5a81b4af6299ae2253cf43809f07478d66885c
++README.md: db93823dea5c3e6aef27ab516d00c8973aa146c1
++README.zh.md: 45a37046092977935e60aa4858a8bbfb3daa619d
+diff --git a/packages/client/ui-agent-preset/README.md b/packages/client/ui-agent-preset/README.md
+index 476d0a3518..db93823dea 100644
+--- a/packages/client/ui-agent-preset/README.md
++++ b/packages/client/ui-agent-preset/README.md
+@@ -43,7 +43,7 @@ When the roster carries the self-referential `cordis` preset, its dashed add-car
+ <details>
+ <summary>Implementation internals — click to expand</summary>
+ 
+-The settings section writes the Host's existing `agent-presets` namespace through `settings.update`. Its visibility switch sets only `modeSelectionEnabled`, and its make-default action writes `default` only while the picker is shown. After either write, the Host roster supplies the effective default, and the chip controller's `agentPresets/select` path carries it to the same still-blank session; that path is the only session-mutation API these surfaces use. Display options and Host-effective visibility come from `agentPresets/list` — the roster already marks the effective Host default and carries `modeSelectionEnabled`, so a non-loopback read-only client stays consistent without introspecting the settings schema. The settings section queries `settings.canOpenAgentPresetDirectory()` when it first loads and joins that result with the roster; a failed query removes only the native-open affordance. The new-session chip renders only while `modeSelectionEnabled` is true; hiding it drops a pending stage and local menu or refusal state, while the header label remains registered and reads each session's recorded preset. The stage is applied when a session arrives (covering both the session a workspace connect created and the blank one it reused) and dropped on refusal. A refusal announces itself as a transient banner over the composer column, because the chip's label has already reverted and a preset the Host refuses to mount is one discovery reported healthy — its roster card carries no reason to go back and read. Only a pick a person just made is announced; the applier that runs when a session becomes current is not. [`dsh-client-connection`](../connection/README.md) authenticates `agentPresets/read`, `agentPresets/copy`, `settings/openAgentPresetDirectory`, `agentPresets/deletePreset`, `agentPresets/list`, and every other Host API method with the same browser session. A composition still names the plugins a session runs, so reading one is reconnaissance, while copy, delete, and the settings-owned directory opener manage the roster and drive the Host desktop. The section re-reads on its own actions, `settings/document-updated`, and `connection/reset`, because composition files are edited outside the browser and nothing on the wire announces a file change.
++The settings section writes the Host's existing `agent-presets` namespace through `settings.update`. Its visibility switch sets only `modeSelectionEnabled`, and its make-default action writes `default` only while the picker is shown. After either write, the Host roster supplies the effective default, and the chip controller's `agentPresets/select` path carries it to the same still-blank session; that path is the only session-mutation API these surfaces use. Display options and Host-effective visibility come from `agentPresets/list` — the roster already marks the effective Host default and carries `modeSelectionEnabled`, so a read-only client stays consistent without introspecting the settings schema. The settings section queries `settings.canOpenAgentPresetDirectory()` when it first loads and joins that result with the roster; a failed query removes only the native-open affordance. The new-session chip renders only while `modeSelectionEnabled` is true; hiding it drops a pending stage and local menu or refusal state, while the header label remains registered and reads each session's recorded preset. The stage is applied when a session arrives (covering both the session a workspace connect created and the blank one it reused) and dropped on refusal. A refusal announces itself as a transient banner over the composer column, because the chip's label has already reverted and a preset the Host refuses to mount is one discovery reported healthy — its roster card carries no reason to go back and read. Only a pick a person just made is announced; the applier that runs when a session becomes current is not. [`dsh-client-connection`](../connection/README.md) authenticates `agentPresets/read`, `agentPresets/copy`, `settings/openAgentPresetDirectory`, `agentPresets/deletePreset`, `agentPresets/list`, and every other Host API method with the same browser session. A composition still names the plugins a session runs, so reading one is reconnaissance, while copy, delete, and the settings-owned directory opener manage the roster and drive the Host desktop. The section re-reads on its own actions, `settings/document-updated`, and `connection/reset`, because composition files are edited outside the browser and nothing on the wire announces a file change.
+ 
+ </details>
+ 
+diff --git a/packages/client/ui-agent-preset/README.zh.md b/packages/client/ui-agent-preset/README.zh.md
+index fa5a81b4af..45a3704609 100644
+--- a/packages/client/ui-agent-preset/README.zh.md
++++ b/packages/client/ui-agent-preset/README.zh.md
+@@ -43,7 +43,7 @@ kind: "package-reference"
+ <details>
+ <summary>实现细节——点击展开</summary>
+ 
+-设置分区通过现有的 `settings.update` 写入宿主的 `agent-presets` 命名空间。可见性开关只设置 `modeSelectionEnabled`；仅当选择器显示时，设为默认动作才会写入 `default`。两种写入之后，都由宿主名单给出当前生效的默认值，再由 chip controller 的 `agentPresets/select` 链路把它带到同一个仍为空白的会话；这些界面只使用这一条会话修改 API。展示选项与宿主的生效可见性来自 `agentPresets/list`——名单本身已标记宿主当前生效的默认值并携带 `modeSelectionEnabled`，因此非 loopback 的只读客户端无需内省 settings schema 也能保持一致。设置分区首次加载时查询 `settings.canOpenAgentPresetDirectory()`，并把结果与名单合并；查询失败只会移除原生打开动作。新建会话 chip 仅在 `modeSelectionEnabled` 为 `true` 时渲染；隐藏它会丢弃待处理的暂存选择及本地菜单或失败横幅状态，而标题标签保持注册并读取每个会话已记录的 preset。暂存值在会话到达时应用（既覆盖工作区连接新建的会话，也覆盖它复用的空白会话），被拒绝时丢弃。系统会通过 composer 列上方的瞬时横幅提示拒绝结果，因为 chip 的标签此时已经恢复原值，而被宿主拒绝挂载的 preset 正是发现过程报告为健康的那一种——它的名单卡片上没有任何原因可供回头查看。只有用户刚做出的选择会触发提示；会话成为当前会话时触发的应用器不会。[`dsh-client-connection`](../connection/README.zh.md) 使用同一浏览器会话认证 `agentPresets/read`、`agentPresets/copy`、`settings/openAgentPresetDirectory`、`agentPresets/deletePreset`、`agentPresets/list` 及其他所有宿主 API 方法。组装仍会指明一个会话所运行的插件，因此读取属于侦察，而复制、删除与设置模块拥有的目录打开操作负责管理名单并驱动宿主桌面。分区在自身操作、`settings/document-updated` 与 `connection/reset` 时重读，因为组装文件在浏览器之外编辑，协议链路不会通知文件变动。
++设置分区通过现有的 `settings.update` 写入宿主的 `agent-presets` 命名空间。可见性开关只设置 `modeSelectionEnabled`；仅当选择器显示时，设为默认动作才会写入 `default`。两种写入之后，都由宿主名单给出当前生效的默认值，再由 chip controller 的 `agentPresets/select` 链路把它带到同一个仍为空白的会话；这些界面只使用这一条会话修改 API。展示选项与宿主的生效可见性来自 `agentPresets/list`——名单本身已标记宿主当前生效的默认值并携带 `modeSelectionEnabled`，因此只读客户端无需内省 settings schema 也能保持一致。设置分区首次加载时查询 `settings.canOpenAgentPresetDirectory()`，并把结果与名单合并；查询失败只会移除原生打开动作。新建会话 chip 仅在 `modeSelectionEnabled` 为 `true` 时渲染；隐藏它会丢弃待处理的暂存选择及本地菜单或失败横幅状态，而标题标签保持注册并读取每个会话已记录的 preset。暂存值在会话到达时应用（既覆盖工作区连接新建的会话，也覆盖它复用的空白会话），被拒绝时丢弃。系统会通过 composer 列上方的瞬时横幅提示拒绝结果，因为 chip 的标签此时已经恢复原值，而被宿主拒绝挂载的 preset 正是发现过程报告为健康的那一种——它的名单卡片上没有任何原因可供回头查看。只有用户刚做出的选择会触发提示；会话成为当前会话时触发的应用器不会。[`dsh-client-connection`](../connection/README.zh.md) 使用同一浏览器会话认证 `agentPresets/read`、`agentPresets/copy`、`settings/openAgentPresetDirectory`、`agentPresets/deletePreset`、`agentPresets/list` 及其他所有宿主 API 方法。组装仍会指明一个会话所运行的插件，因此读取属于侦察，而复制、删除与设置模块拥有的目录打开操作负责管理名单并驱动宿主桌面。分区在自身操作、`settings/document-updated` 与 `connection/reset` 时重读，因为组装文件在浏览器之外编辑，协议链路不会通知文件变动。
+ 
+ </details>
+ 
+diff --git a/packages/client/ui-settings-general/README.i18n.yaml b/packages/client/ui-settings-general/README.i18n.yaml
+index cb4566a437..ec6bb54c98 100644
+--- a/packages/client/ui-settings-general/README.i18n.yaml
++++ b/packages/client/ui-settings-general/README.i18n.yaml
+@@ -2,5 +2,5 @@
+ # side as of the last confirmed-consistent state. Both languages carry equal authority;
+ # after editing either side, bring the other along and re-record with:
+ #   pnpm run verify-translation-pairing --write packages/client/ui-settings-general/README.md
+-README.md: 845d9c48dce2264d478f0ac854ef85a480828a14
+-README.zh.md: 814082f94156e44b45e015e67acb7a281ba2e7e9
++README.md: 383016772e9e67283c0baaeb3768dbf18dc119ec
++README.zh.md: c75bf5dfa263d8fbbdacbb003969a904f43f0d02
+diff --git a/packages/client/ui-settings-general/README.md b/packages/client/ui-settings-general/README.md
+index 845d9c48dc..383016772e 100644
+--- a/packages/client/ui-settings-general/README.md
++++ b/packages/client/ui-settings-general/README.md
+@@ -33,7 +33,7 @@ The General section holds rows registered into `settings.general.item` by featur
+ 
+ ### Opening the configuration file
+ 
+-On a loopback browser, the shell renders **Open configuration file** only when the Host confirms that a provider-owned local document can be prepared. The action opens that document in the native text editor (bypassing the browser file association on macOS). Remote browsers never register the action and never issue the privileged settings read.
++On a loopback browser, the shell renders **Open configuration file** only when the Host confirms that a provider-owned local document can be prepared. The action opens that document in the native text editor (bypassing the browser file association on macOS). Remote browsers never register the action, although they read the settings document like any authenticated browser.
+ 
+ ### Onboarding steps
+ 
+@@ -59,7 +59,7 @@ The shell is an explicit recovery consumer, so it injects Connection directly ra
+ 
+ ### Document availability
+ 
+-On a loopback page, the Client loads the provider's `hasDocument` capability through `settings/describe` and renders **Open configuration file** only when the Host confirms that a provider-owned local document can be prepared. The action calls the pathless, browser-authenticated `settings/openSettingsDocument` Remote; the Host resolves the provider path again, materializes an absent document, and hands it to a native text editor (`open -t` on macOS, bypassing a browser file association; the desktop file association on Linux and Windows; Windows association after `wslpath -w` translation on WSL). Open failures keep the action available and render a localized error. Reopening the dialog or reconnecting refreshes availability after a transient read failure or Host topology change. Non-loopback pages retain the Client policy that withholds this native action and its settings read.
++On a loopback page, the Client loads the provider's `hasDocument` capability through `settings/describe` and renders **Open configuration file** only when the Host confirms that a provider-owned local document can be prepared. The action calls the pathless, browser-authenticated `settings/openSettingsDocument` Remote; the Host resolves the provider path again, materializes an absent document, and hands it to a native text editor (`open -t` on macOS, bypassing a browser file association; the desktop file association on Linux and Windows; Windows association after `wslpath -w` translation on WSL). Open failures keep the action available and render a localized error. Reopening the dialog or reconnecting refreshes availability after a transient read failure or Host topology change. Non-loopback pages retain the Client policy that withholds this native action; the settings read it needs is served to every authenticated browser.
+ 
+ ### Host half
+ 
+diff --git a/packages/client/ui-settings-general/README.zh.md b/packages/client/ui-settings-general/README.zh.md
+index 814082f941..c75bf5dfa2 100644
+--- a/packages/client/ui-settings-general/README.zh.md
++++ b/packages/client/ui-settings-general/README.zh.md
+@@ -33,7 +33,7 @@ kind: "package-reference"
+ 
+ ### 打开配置文件
+ 
+-在回环浏览器上，只有当宿主确认可准备好一份由提供方持有的本地文档时，外壳才渲染**打开配置文件**。该操作会在原生文本编辑器中打开该文档（macOS 上绕过浏览器文件关联）。远程浏览器从不注册该操作，也从不发起这项特权设置读取。
++在回环浏览器上，只有当宿主确认可准备好一份由提供方持有的本地文档时，外壳才渲染**打开配置文件**。该操作会在原生文本编辑器中打开该文档（macOS 上绕过浏览器文件关联）。远程浏览器从不注册该操作，但与任何已认证浏览器一样会读取 settings 文档。
+ 
+ ### 引导步骤
+ 
+@@ -59,7 +59,7 @@ kind: "package-reference"
+ 
+ ### 文档可用性
+ 
+-在 loopback 页面上，Client 通过 `settings/describe` 加载提供方的 `hasDocument` 能力，且只有在 Host 确认可准备好一份由提供方持有的本地文档时才渲染**打开配置文件**操作。该操作调用无路径参数且经浏览器认证的 `settings/openSettingsDocument` Remote；Host 会再次解析提供方路径、在文档缺失时将其创建出来，并交给原生文本编辑器（macOS 上使用 `open -t`，绕过浏览器文件关联；Linux 和 Windows 上使用桌面文件关联；WSL 上经 `wslpath -w` 转换后使用 Windows 文件关联）。打开失败时该操作仍可使用，并渲染本地化错误。临时读取失败或 Host 拓扑变化后，重新打开对话框或重新连接会刷新可用性。非 loopback 页面保留 Client 策略，不提供该原生操作及其 settings 读取。
++在 loopback 页面上，Client 通过 `settings/describe` 加载提供方的 `hasDocument` 能力，且只有在 Host 确认可准备好一份由提供方持有的本地文档时才渲染**打开配置文件**操作。该操作调用无路径参数且经浏览器认证的 `settings/openSettingsDocument` Remote；Host 会再次解析提供方路径、在文档缺失时将其创建出来，并交给原生文本编辑器（macOS 上使用 `open -t`，绕过浏览器文件关联；Linux 和 Windows 上使用桌面文件关联；WSL 上经 `wslpath -w` 转换后使用 Windows 文件关联）。打开失败时该操作仍可使用，并渲染本地化错误。临时读取失败或 Host 拓扑变化后，重新打开对话框或重新连接会刷新可用性。非 loopback 页面保留 Client 策略，不提供该原生操作；它所需的 settings 读取则服务于每个已认证浏览器。
+ 
+ ### 宿主端
+ 
+diff --git a/packages/client/ui-settings-general/tests/apply.client.spec.ts b/packages/client/ui-settings-general/tests/apply.client.spec.ts
+index 10380d26d9..8df1196e34 100644
+--- a/packages/client/ui-settings-general/tests/apply.client.spec.ts
++++ b/packages/client/ui-settings-general/tests/apply.client.spec.ts
+@@ -180,16 +180,18 @@ describe('ui-settings-general apply', () => {
+     await vi.waitFor(() => { expect(c.mock.log.calls('settings/describe')).toHaveLength(3) })
+   })
+ 
+-  it('withholds the Host document action off-loopback', async ({ mock, start }) => {
++  it('withholds the Host document action off-loopback but still reads Host settings', async ({ mock, start }) => {
+     const loopbackUrl = location.href
+     setPageUrl('http://198.51.100.7:3000/')
+     onTestFinished(() => { setPageUrl(loopbackUrl) })
+     const { c } = await client(mock, start)
+     expect(c.connection.isLoopback).toBe(false)
+     expect(ownEntries(c, 'settings.action')).toEqual([])
+-    // Off-loopback settings stay process-local: no describe read, so the browser language stands.
+-    expect(c.mock.log.calls('settings/describe')).toEqual([])
+-    expect(c.ctx.locale.getSnapshot().active).toBe('en')
++    // Opening the Host document is a desktop action and stays loopback-only;
++    // the document it reads is served to every authenticated browser, so the
++    // Host preference still reaches a remote page.
++    await vi.waitFor(() => { expect(c.mock.log.calls('settings/describe')).toHaveLength(2) })
++    await vi.waitFor(() => { expect(c.ctx.locale.getSnapshot().active).toBe('zh') })
+     await c.unload(SELF)
+     await c.flush()
+     for (const [name] of SEATS) expect(ownEntries(c, name)).toEqual([])
+diff --git a/packages/client/ui-settings-models/README.i18n.yaml b/packages/client/ui-settings-models/README.i18n.yaml
+index dbd08b1c7f..465642884a 100644
+--- a/packages/client/ui-settings-models/README.i18n.yaml
++++ b/packages/client/ui-settings-models/README.i18n.yaml
+@@ -2,5 +2,5 @@
+ # side as of the last confirmed-consistent state. Both languages carry equal authority;
+ # after editing either side, bring the other along and re-record with:
+ #   pnpm run verify-translation-pairing --write packages/client/ui-settings-models/README.md
+-README.md: 283761d17f857c9142a59ee3b333081df84ecd9c
+-README.zh.md: 61029555adfc3ee14ccb5b083322d7ae5dbedfee
++README.md: 07390dccec3a4ccbbdac60269453af3f55b96c11
++README.zh.md: 4b2d5bc88f894c61856d29bcac926d341c5b6138
+diff --git a/packages/client/ui-settings-models/README.md b/packages/client/ui-settings-models/README.md
+index 283761d17f..07390dccec 100644
+--- a/packages/client/ui-settings-models/README.md
++++ b/packages/client/ui-settings-models/README.md
+@@ -69,7 +69,7 @@ Each settings write carries the card's current `revision`, so a concurrent write
+ 
+ ### Onboarding coordinator
+ 
+-The notice step owns its exact copy in `src/client/locales.ts` and its acknowledgement version in `src/onboarding-copy.ts`; on loopback it compares and writes `ui-onboarding.welcomeNoticeVersion` through the existing settings API, and only an explicit Continue records the current version. A non-loopback browser cannot use that Host-only namespace, so acknowledgement is process-local and the notice returns after reload. The DeepSeek step renders the existing `ProviderEditor` in credential-only mode inside the shared onboarding modal; `credentials.set` stays the only secret write, and no provider settings are changed.
++The notice step owns its exact copy in `src/client/locales.ts` and its acknowledgement version in `src/onboarding-copy.ts`; it compares and writes `ui-onboarding.welcomeNoticeVersion` through the existing settings API, and only an explicit Continue records the current version. Every authenticated browser shares that Host namespace, so the acknowledgement survives a reload; a composition that resolves memory mode keeps it process-local and the notice returns after reload. The DeepSeek step renders the existing `ProviderEditor` in credential-only mode inside the shared onboarding modal; `credentials.set` stays the only secret write, and no provider settings are changed.
+ 
+ </details>
+ 
+diff --git a/packages/client/ui-settings-models/README.zh.md b/packages/client/ui-settings-models/README.zh.md
+index 61029555ad..4b2d5bc88f 100644
+--- a/packages/client/ui-settings-models/README.zh.md
++++ b/packages/client/ui-settings-models/README.zh.md
+@@ -69,7 +69,7 @@ kind: "package-reference"
+ 
+ ### 引导协调器
+ 
+-声明步骤在 `src/client/locales.ts` 中持有精确文案，并在 `src/onboarding-copy.ts` 中持有确认版本；回环时它通过既有 settings API 比较并写入 `ui-onboarding.welcomeNoticeVersion`，且只有显式点击「继续」才会记录当前版本。非回环浏览器无法使用这个仅限宿主的 namespace，因此确认只保留在进程内，刷新后声明会再次出现。DeepSeek 步骤在共享引导模态框内以仅凭据模式渲染既有 `ProviderEditor`；`credentials.set` 仍是唯一的机密写入，且不改变任何提供方设置。
++声明步骤在 `src/client/locales.ts` 中持有精确文案，并在 `src/onboarding-copy.ts` 中持有确认版本；它通过既有 settings API 比较并写入 `ui-onboarding.welcomeNoticeVersion`，且只有显式点击「继续」才会记录当前版本。每个已认证浏览器共享该 Host namespace，因此确认能跨刷新保留；解析为内存模式的组合则把确认保留在进程内，刷新后声明会再次出现。DeepSeek 步骤在共享引导模态框内以仅凭据模式渲染既有 `ProviderEditor`；`credentials.set` 仍是唯一的机密写入，且不改变任何提供方设置。
+ 
+ </details>
+ 
+diff --git a/packages/client/ui-settings-models/src/client/index.ts b/packages/client/ui-settings-models/src/client/index.ts
+index 721f807092..513f645a07 100644
+--- a/packages/client/ui-settings-models/src/client/index.ts
++++ b/packages/client/ui-settings-models/src/client/index.ts
+@@ -97,8 +97,8 @@ export function apply(ctx: ClientContext): void {
+     schema,
+     t,
+   })
+-  // The scope's own memory mode is what keeps a remote browser process-local,
+-  // so the store needs no isLoopback branch of its own.
++  // The bound scope publishes whichever persistence mode the composition
++  // resolved, so the store keeps no locality branch of its own.
+   const welcomeController = new WelcomeNoticeStore(ctx.settingsScope.bind({
+     namespace: WELCOME_NOTICE_SETTINGS_NAMESPACE,
+     decode: decodeWelcomeSection,
+diff --git a/packages/client/ui-settings-models/src/client/welcome-store.ts b/packages/client/ui-settings-models/src/client/welcome-store.ts
+index 9fe4ff3113..687c73fcde 100644
+--- a/packages/client/ui-settings-models/src/client/welcome-store.ts
++++ b/packages/client/ui-settings-models/src/client/welcome-store.ts
+@@ -1,8 +1,8 @@
+ /**
+  * Welcome-notice state derived from the welcome settings scope. The scope is
+- * the transport: a loopback browser follows the durable Host section, while a
+- * remote browser's memory-mode scope never answers and the acknowledgement
+- * stays process-local here.
++ * the transport: a Host-backed scope follows the durable Host section, while a
++ * memory-mode scope (a composition without Host persistence) never answers and
++ * the acknowledgement stays process-local here.
+  */
+ 
+ import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-store'
+@@ -39,7 +39,7 @@ function assertNever(_value: never): never {
+   throw new Error('unexpected welcome settings status')
+ }
+ 
+-/** Coordinates durable Host acknowledgement or a process-local remote fallback. */
++/** Coordinates durable Host acknowledgement or a process-local memory-mode fallback. */
+ export class WelcomeNoticeStore {
+   /** uSES-safe state source shared by the registered welcome step. */
+   readonly store: SnapshotStore<WelcomeNoticeState> = createSnapshotStore<WelcomeNoticeState>({
+@@ -52,7 +52,7 @@ export class WelcomeNoticeStore {
+ 
+   /**
+    * @param scope - the welcome settings namespace scope; its memory mode is
+-   * what keeps a remote browser process-local.
++   * what keeps the acknowledgement process-local.
+    */
+   constructor(private readonly scope: SettingsScope<WelcomeSection>) {}
+ 
+diff --git a/packages/client/ui-settings-models/tests/apply.client.spec.ts b/packages/client/ui-settings-models/tests/apply.client.spec.ts
+index da1dd00f50..ed274ac195 100644
+--- a/packages/client/ui-settings-models/tests/apply.client.spec.ts
++++ b/packages/client/ui-settings-models/tests/apply.client.spec.ts
+@@ -195,8 +195,20 @@ describe('ui-settings-models apply', () => {
+     expect(() => b.locale.register('settings.models', 'en', {})).not.toThrow()
+   })
+ 
+-  it('keeps remote-browser acknowledgement in process memory', async () => {
+-    const b = await bench(false)
++  it('follows the Host welcome section from a non-loopback browser', async () => {
++    const mock = RemoteMock.create().load(remoteDefaultResponses)
++    const namespace = {
++      ns: WELCOME_NOTICE_SETTINGS_NAMESPACE,
++      schema: {},
++      value: { [WELCOME_NOTICE_ACK_FIELD]: WELCOME_NOTICE_VERSION },
++      applies: 'live' as const,
++      secrets: [],
++      revision: 0,
++    }
++    mock.remote.settings.describe.mockResolvedValue(ok({
++      writable: true, hasDocument: false, namespaces: [namespace],
++    }))
++    const b = await bench(false, mock)
+     declare(b.slots)
+     await b.ctx.plugin({ inject: [...inject], apply }).await()
+     const entry = b.slots.entries('settings.onboarding')
+@@ -206,8 +218,8 @@ describe('ui-settings-models apply', () => {
+     )()
+ 
+     await injected.controller.load()
+-    expect(injected.controller.store.getSnapshot()).toEqual({
+-      status: 'ready', acknowledged: false, error: null,
++    await vi.waitFor(() => {
++      expect(injected.hooks.welcome.getSnapshot()).toMatchObject({ status: 'ready', acknowledged: true })
+     })
+   })
+ })
+diff --git a/packages/client/ui-settings/README.i18n.yaml b/packages/client/ui-settings/README.i18n.yaml
+index f325c7e238..368f34fb21 100644
+--- a/packages/client/ui-settings/README.i18n.yaml
++++ b/packages/client/ui-settings/README.i18n.yaml
+@@ -2,5 +2,5 @@
+ # side as of the last confirmed-consistent state. Both languages carry equal authority;
+ # after editing either side, bring the other along and re-record with:
+ #   pnpm run verify-translation-pairing --write packages/client/ui-settings/README.md
+-README.md: 760b4a4567481b561ce319926149815119018177
+-README.zh.md: f8e2128d734b650b7cd7a10c180f90ea01b77ab5
++README.md: 8e330efc3636772da5eed834f49994432b66df0b
++README.zh.md: 5ee5006e1e4be1f42283c5ad1767f933b48a42cb
+diff --git a/packages/client/ui-settings/README.md b/packages/client/ui-settings/README.md
+index 760b4a4567..8e330efc36 100644
+--- a/packages/client/ui-settings/README.md
++++ b/packages/client/ui-settings/README.md
+@@ -92,9 +92,9 @@ None; this package neither assembles nor sends a provider request.
+ <a id="known-limitations-and-deferred-work"></a>
+ 
+ 
+-These limits define where the settings transport cannot reach; they are current package constraints.
++These limits are current package constraints.
+ 
+-- **Non-loopback pages get no durable settings** — this Client keeps Host persistence disabled there, so a scope starts `unavailable` and never crosses the wire; every row it backs is inert even though Connection authentication covers the API.
++- **One settings document per DSH home** — every authenticated browser of a Host edits the same `$DSH_HOME/settings.yaml`, so a paired LAN browser and the loopback page share one document; only the Host document action stays loopback-only (ui-settings-general).
+ 
+ <a id="dev-note"></a>
+ ### Dev Note
+diff --git a/packages/client/ui-settings/README.zh.md b/packages/client/ui-settings/README.zh.md
+index f8e2128d73..5ee5006e1e 100644
+--- a/packages/client/ui-settings/README.zh.md
++++ b/packages/client/ui-settings/README.zh.md
+@@ -92,9 +92,9 @@ kind: "package-reference"
+ <a id="known-limitations-and-deferred-work"></a>
+ 
+ 
+-这些限制说明设置传输层够不到的地方；它们是当前包约束。
++这些限制是本包当前的约束。
+ 
+-- **非 loopback 页面没有持久化设置**：本 Client 在那里禁用 Host 持久化，因此 scope 以 `unavailable` 起步且从不跨线路；尽管 Connection 认证覆盖 API，它支撑的每一行仍在那里无效。
++- **每个 DSH home 只有一份 settings 文档**：一个 Host 的每个已认证浏览器都编辑同一份 `$DSH_HOME/settings.yaml`，因此配对后的 LAN 浏览器与回环页面共享同一份文档；只有 Host 文档动作仍仅限回环（ui-settings-general）。
+ 
+ <a id="dev-note"></a>
+ ### 开发备注
+diff --git a/packages/client/ui-settings/src/client/index.ts b/packages/client/ui-settings/src/client/index.ts
+index d595952c3c..f131f4edf6 100644
+--- a/packages/client/ui-settings/src/client/index.ts
++++ b/packages/client/ui-settings/src/client/index.ts
+@@ -54,8 +54,12 @@ export const inject = ['remote', 'remote.settings']
+ export function apply(ctx: Context): void {
+   const schema = new SettingsSchemaService(ctx)
+   // Resolved once here, where `remote` is declared in this plugin's own
+-  // `inject`; the binder hands the same answer to every scope it binds.
+-  const persistence = ctx.remote.$host.isLoopback ? 'host' : 'memory'
++  // `inject`; the binder hands the same answer to every scope it binds. The
++  // dist root and `/api` share one browser-session check, so a page that
++  // loaded is authenticated to this Host whatever authority serves it: Host
++  // persistence follows that authentication, and `isLoopback` keeps gating the
++  // Host document action in ui-settings-general.
++  const persistence: 'host' | 'memory' = 'host'
+   const mirror = new SettingsDescribeMirror(ctx, persistence)
+   ctx.effect(() => {
+     const disposers = [
+diff --git a/packages/client/ui-settings/src/client/settings-contract.ts b/packages/client/ui-settings/src/client/settings-contract.ts
+index dd06600781..cc71e38971 100644
+--- a/packages/client/ui-settings/src/client/settings-contract.ts
++++ b/packages/client/ui-settings/src/client/settings-contract.ts
+@@ -9,7 +9,7 @@ export interface SettingsScopeSnapshot<T> {
+   /**
+    * `loading` until the first accepted section, `ready` while one stands, and
+    * `unavailable` when the namespace is not exposed to this client or the
+-   * connection keeps preferences process-local (memory mode).
++   * composition resolved memory mode.
+    */
+   status: 'loading' | 'ready' | 'unavailable'
+   /** Last accepted schema-resolved section; undefined before the first acceptance. */
+@@ -29,7 +29,7 @@ export interface SettingsScopeSnapshot<T> {
+   revision: number | undefined
+   /** Whether the Host document accepts writes; memory mode never does. */
+   writable: boolean
+-  /** `host` syncs with the Host document; `memory` keeps a remote browser process-local. */
++  /** `host` syncs with the Host document; `memory` keeps a composition without Host persistence process-local. */
+   mode: 'host' | 'memory'
+ }
+ 
+diff --git a/packages/client/ui-settings/src/client/settings-mirror.ts b/packages/client/ui-settings/src/client/settings-mirror.ts
+index d26f0b8c94..20e61079fa 100644
+--- a/packages/client/ui-settings/src/client/settings-mirror.ts
++++ b/packages/client/ui-settings/src/client/settings-mirror.ts
+@@ -26,7 +26,7 @@ export interface SettingsDescribeView {
+ /** Mirror state every derived settings surface renders from. */
+ export interface SettingsMirrorSnapshot {
+   /**
+-   * `unavailable` is the terminal non-loopback state; `ready` persists across
++   * `unavailable` is the terminal memory-mode state; `ready` persists across
+    * later failed refreshes (the held view keeps serving); `idle` means no
+    * answer is held and no read is running, so `ensure` will start one.
+    */
+@@ -79,7 +79,8 @@ export class SettingsDescribeMirror implements SettingsDescribeFace {
+   /**
+    * @param ctx - the providing plugin's context, whose `remote.settings`
+    * namespace answers the describe read.
+-   * @param persistence - client-selected Host persistence; non-loopback pages may remain process-local.
++   * @param persistence - composition-selected Host persistence; `memory` keeps
++   * the mirror and every scope over it process-local.
+    */
+   constructor(
+     private readonly ctx: ClientContext,
+diff --git a/packages/client/ui-settings/src/client/settings-scope.ts b/packages/client/ui-settings/src/client/settings-scope.ts
+index e795ef4afc..a4d91d1f2f 100644
+--- a/packages/client/ui-settings/src/client/settings-scope.ts
++++ b/packages/client/ui-settings/src/client/settings-scope.ts
+@@ -57,7 +57,8 @@ export class SettingsScopeController<T> implements SettingsScope<T> {
+    * namespace carries this scope's writes (reads ride the mirror).
+    * @param spec - namespace identity and optional narrowing decoder.
+    * @param mirror - the shared describe mirror this scope derives from.
+-   * @param persistence - client-selected Host persistence; non-loopback pages may remain process-local.
++   * @param persistence - composition-selected Host persistence; `memory` keeps
++   * this scope process-local.
+    * @param schema - settings-owned schema operations.
+    */
+   constructor(
+diff --git a/packages/client/ui-settings/tests/plugin.client.spec.ts b/packages/client/ui-settings/tests/plugin.client.spec.ts
+index 9d5d063dbd..2d66050992 100644
+--- a/packages/client/ui-settings/tests/plugin.client.spec.ts
++++ b/packages/client/ui-settings/tests/plugin.client.spec.ts
+@@ -6,12 +6,13 @@ import { SettingsSchemaService } from '../src/client/schema.ts'
+ import { SettingsScopeBinder } from '../src/client/settings-scope.ts'
+ import { apply as hostApply } from '../src/index.ts'
+ 
+-function bench() {
++function bench(isLoopback = true) {
+   const describeCall = vi.fn().mockResolvedValue({
+     ok: true, value: { writable: true, hasDocument: true, namespaces: [] },
+   })
+   const ctx = new Context()
+   const remote = new TestRemote(ctx, { settings: { describe: describeCall } })
++  remote.$host = { home: undefined, isLoopback }
+   return { ctx, describeCall, remote, fiber: ctx.plugin({ inject: [...inject], apply }) }
+ }
+ 
+@@ -28,6 +29,12 @@ describe('settings domain base plugin', () => {
+     await vi.waitFor(() => { expect(describeCall).toHaveBeenCalledTimes(1) })
+   })
+ 
++  it('reads the Host document from a non-loopback browser too', async () => {
++    const { describeCall, fiber } = bench(false)
++    await fiber.await()
++    await vi.waitFor(() => { expect(describeCall).toHaveBeenCalledTimes(1) })
++  })
++
+   it('refreshes the mirror on document commits and connection resets, once each', async () => {
+     const { ctx, describeCall, remote, fiber } = bench()
+     await fiber.await()
+diff --git a/packages/client/ui-theme/README.i18n.yaml b/packages/client/ui-theme/README.i18n.yaml
+index 36b96066e3..457a30fdc1 100644
+--- a/packages/client/ui-theme/README.i18n.yaml
++++ b/packages/client/ui-theme/README.i18n.yaml
+@@ -2,5 +2,5 @@
+ # side as of the last confirmed-consistent state. Both languages carry equal authority;
+ # after editing either side, bring the other along and re-record with:
+ #   pnpm run verify-translation-pairing --write packages/client/ui-theme/README.md
+-README.md: 291492b9b41df6570722fb2dbd14565c660ec350
+-README.zh.md: 08cef7aca2f6df648fe75b3d27aed93c44a2d30c
++README.md: 0d5352cd5f97a5a7a9520e49ab440c2d97eda116
++README.zh.md: 0df88d19415622d7e2e3b2badf4b091ba05a6966
+diff --git a/packages/client/ui-theme/README.md b/packages/client/ui-theme/README.md
+index 291492b9b4..0d5352cd5f 100644
+--- a/packages/client/ui-theme/README.md
++++ b/packages/client/ui-theme/README.md
+@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
+ 
+ ## Summary
+ 
+-`dsh-client-ui-theme` lets Web GUI users choose `light`, `dark`, or `system` and set conversation content text from 12 to 17 px in Settings. A loopback client stores both values in the `ui-theme` settings namespace, which the local provider persists in `$DSH_HOME/settings.yaml` by default. The plugin resolves `system` through `prefers-color-scheme` and publishes immutable `ThemeSnapshot`s; ui-layout applies each snapshot to the document. The package also ships the `--dsw-*` token stylesheets and injects a synchronous bootstrap so the selected palette and font size apply before the shell loads. Third-party themes can register alias-token overrides through `ctx.theme`.
++`dsh-client-ui-theme` lets Web GUI users choose `light`, `dark`, or `system` and set conversation content text from 12 to 17 px in Settings. The client stores both values in the `ui-theme` settings namespace, which the local provider persists in `$DSH_HOME/settings.yaml` by default. The plugin resolves `system` through `prefers-color-scheme` and publishes immutable `ThemeSnapshot`s; ui-layout applies each snapshot to the document. The package also ships the `--dsw-*` token stylesheets and injects a synchronous bootstrap so the selected palette and font size apply before the shell loads. Third-party themes can register alias-token overrides through `ctx.theme`.
+ 
+ ## Table of Contents
+ 
+@@ -25,11 +25,11 @@ English | [中文](README.zh.md)
+ <a id="use-this-package"></a>
+ ## Use this package
+ 
+-Users switch the color scheme and content font size from two rows in Settings (General section); both choices persist across restarts on a loopback browser. Feature plugins consume the current snapshot through `ctx.theme` and read the `--dsw-*` tokens in CSS; they do not manage theme state themselves.
++Users switch the color scheme and content font size from two rows in Settings (General section); both choices persist across restarts. Feature plugins consume the current snapshot through `ctx.theme` and read the `--dsw-*` tokens in CSS; they do not manage theme state themselves.
+ 
+ ### Appearance and font size
+ 
+-The plugin registers Appearance preference cubes and a font-size stepper in the General section. The stepper accepts integer values from 12 through 17 px and defaults to 14 px. It changes conversation headings and base text by the same increment, including the user bubble and composer draft; flow-row titles, summaries, and tables follow one step under the body size, while small text and code keep fixed sizes. Each accepted change writes through the Host settings API. Rapid changes serialize in gesture order with namespace revisions, and a rejected latest write reloads the durable values. Non-loopback pages keep both choices process-local.
++The plugin registers Appearance preference cubes and a font-size stepper in the General section. The stepper accepts integer values from 12 through 17 px and defaults to 14 px. It changes conversation headings and base text by the same increment, including the user bubble and composer draft; flow-row titles, summaries, and tables follow one step under the body size, while small text and code keep fixed sizes. Each accepted change writes through the Host settings API. Rapid changes serialize in gesture order with namespace revisions, and a rejected latest write reloads the durable values. Every authenticated browser, loopback or LAN-paired, writes the same Host document.
+ 
+ ### Registering a theme
+ 
+@@ -63,7 +63,7 @@ The service owns theme and font-size state and publishes snapshots. The ui-layou
+ 
+ ### Preference persistence
+ 
+-The service provides itself immediately with the schema defaults on a loopback browser, then loads the `ui-theme` namespace and writes each accepted theme or font-size change through the Host settings API. Pushed settings changes and reconnects refetch the namespace. Non-loopback pages do not create that Host-backed scope. The persistence boundary is owned by the [Host-backed preferences note](../../../.agents/notes/implemented/bug-fix/2026-08-06-host-backed-web-preferences.md).
++The service provides itself immediately with the schema defaults, then loads the `ui-theme` namespace and writes each accepted theme or font-size change through the Host settings API. Pushed settings changes and reconnects refetch the namespace. Every authenticated browser binds that Host-backed scope. The persistence boundary is owned by the [Host-backed preferences note](../../../.agents/notes/implemented/bug-fix/2026-08-06-host-backed-web-preferences.md).
+ 
+ </details>
+ 
+diff --git a/packages/client/ui-theme/README.zh.md b/packages/client/ui-theme/README.zh.md
+index 08cef7aca2..0df88d1941 100644
+--- a/packages/client/ui-theme/README.zh.md
++++ b/packages/client/ui-theme/README.zh.md
+@@ -9,7 +9,7 @@ kind: "package-reference"
+ 
+ ## 概述
+ 
+-`dsh-client-ui-theme` 让 Web GUI 用户在设置中选择 `light`、`dark` 或 `system`，并把会话正文字号设为 12 至 17 px。回环客户端把两个值存入 `ui-theme` 设置命名空间，本地提供方默认将其持久化到 `$DSH_HOME/settings.yaml`。插件通过 `prefers-color-scheme` 解析 `system` 并发布不可变的 `ThemeSnapshot`；ui-layout 把每份快照应用到文档。本包还提供 `--dsw-*` token 样式表，并注入同步引导，使所选调色板与字号在外壳加载前生效。第三方主题可通过 `ctx.theme` 注册别名 token 覆盖。
++`dsh-client-ui-theme` 让 Web GUI 用户在设置中选择 `light`、`dark` 或 `system`，并把会话正文字号设为 12 至 17 px。客户端把两个值存入 `ui-theme` 设置命名空间，本地提供方默认将其持久化到 `$DSH_HOME/settings.yaml`。插件通过 `prefers-color-scheme` 解析 `system` 并发布不可变的 `ThemeSnapshot`；ui-layout 把每份快照应用到文档。本包还提供 `--dsw-*` token 样式表，并注入同步引导，使所选调色板与字号在外壳加载前生效。第三方主题可通过 `ctx.theme` 注册别名 token 覆盖。
+ 
+ ## 目录
+ 
+@@ -25,11 +25,11 @@ kind: "package-reference"
+ <a id="use-this-package"></a>
+ ## 使用本包
+ 
+-用户从设置（「通用」分区）的两行中切换配色方案与正文字号；在回环浏览器上，两个选择都会跨重启持久化。功能插件通过 `ctx.theme` 消费当前快照，并在 CSS 中读取 `--dsw-*` token；它们不自行管理主题状态。
++用户从设置（「通用」分区）的两行中切换配色方案与正文字号；两个选择都会跨重启持久化。功能插件通过 `ctx.theme` 消费当前快照，并在 CSS 中读取 `--dsw-*` token；它们不自行管理主题状态。
+ 
+ ### 外观与字号
+ 
+-插件在「通用」分区注册外观偏好方块与字号步进器。步进器接受 12 至 17 px 的整数，默认值为 14 px。它以相同增量调整会话标题与基础文本，包括用户气泡与 composer 草稿；流内行的标题、摘要与表格跟随比正文低一档的字号，小号文本和代码保持固定字号。每次通过的变更都经 Host settings API 写入。连续快速变更按操作顺序携带命名空间 revision 串行写入，最新写入被拒时重新加载持久值。非 loopback 页面把两个选择都保留在进程内。
++插件在「通用」分区注册外观偏好方块与字号步进器。步进器接受 12 至 17 px 的整数，默认值为 14 px。它以相同增量调整会话标题与基础文本，包括用户气泡与 composer 草稿；流内行的标题、摘要与表格跟随比正文低一档的字号，小号文本和代码保持固定字号。每次通过的变更都经 Host settings API 写入。连续快速变更按操作顺序携带命名空间 revision 串行写入，最新写入被拒时重新加载持久值。每个已认证浏览器（回环或配对后的 LAN）都写入同一份 Host 文档。
+ 
+ ### 注册主题
+ 
+@@ -63,7 +63,7 @@ kind: "package-reference"
+ 
+ ### 偏好持久化
+ 
+-在 loopback 浏览器上，服务先以 schema 默认值立即提供自身，随后加载 `ui-theme` 命名空间，并把每次通过的主题或字号变更经 Host settings API 写入。收到推送的设置变更时或重连后都会重新拉取该命名空间。非 loopback 页面不会创建该 Host-backed scope。该持久化边界由 [Host 支撑的偏好笔记](../../../.agents/notes/implemented/bug-fix/2026-08-06-host-backed-web-preferences.zh.md) 拥有。
++服务先以 schema 默认值立即提供自身，随后加载 `ui-theme` 命名空间，并把每次通过的主题或字号变更经 Host settings API 写入。收到推送的设置变更时或重连后都会重新拉取该命名空间。每个已认证浏览器都会绑定该 Host-backed scope。该持久化边界由 [Host 支撑的偏好笔记](../../../.agents/notes/implemented/bug-fix/2026-08-06-host-backed-web-preferences.zh.md) 拥有。
+ 
+ </details>
+ 
+diff --git a/packages/client/ui-theme/tests/apply.client.spec.ts b/packages/client/ui-theme/tests/apply.client.spec.ts
+index 584aae2719..2666169c5f 100644
+--- a/packages/client/ui-theme/tests/apply.client.spec.ts
++++ b/packages/client/ui-theme/tests/apply.client.spec.ts
+@@ -153,7 +153,7 @@ describe('ui-theme apply', () => {
+     await vi.waitFor(() => { expect(b.mutate).toHaveBeenCalledTimes(2) })
+   })
+ 
+-  it('loads Host settings at boot, refreshes its namespace, and keeps remote browsers process-local', async () => {
++  it('loads Host settings at boot and refreshes its namespace', async () => {
+     const b = await bench()
+     // The shared mirror read once at bench time; a Host-side change reaches it
+     // through the document invalidation, exactly as production announces one.
+@@ -175,15 +175,20 @@ describe('ui-theme apply', () => {
+     b.setHostSection({ preference: 'dark' })
+     b.ctx.emit('connection/reset')
+     await vi.waitFor(() => { expect(theme.getTheme().preference).toBe('dark') })
++  })
+ 
+-    const remote = await bench(false)
+-    declareItems(remote.slots)
+-    await remote.ctx.plugin({ inject: [...inject], apply }).await()
+-    const remoteTheme = remote.ctx.get('theme') as ThemeRuntime
+-    remoteTheme.setTheme('dark')
+-    await Promise.resolve()
+-    expect(remote.describe).not.toHaveBeenCalled()
+-    expect(remote.mutate).not.toHaveBeenCalled()
++  it('loads and writes the Host document from a non-loopback browser too', async () => {
++    const b = await bench(false)
++    // Any loaded page is authenticated to this Host, so page locality changes
++    // nothing about the settings transport.
++    b.setHostSection({ preference: 'dark', fontSize: 17 })
++    b.events.emit('settings/document-updated', [THEME_SETTINGS_NAMESPACE, 0])
++    declareItems(b.slots)
++    await b.ctx.plugin({ inject: [...inject], apply }).await()
++    const theme = b.ctx.get('theme') as ThemeRuntime
++    await vi.waitFor(() => { expect(theme.getTheme().preference).toBe('dark') })
++    theme.setTheme('light')
++    await vi.waitFor(() => { expect(b.mutate).toHaveBeenCalledTimes(1) })
+   })
+ 
+   it('activates before a slow settings refresh and converges when it settles', async () => {
