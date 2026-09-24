@@ -475,10 +475,12 @@ export class BrowserAuth {
   }
 
   private writePairingPage(res: ConnectionIndexResponse): void {
+    // No referrer policy: this page's only request is the form's own POST, and
+    // under `no-referrer` browsers send that POST with the literal `Origin:
+    // null` instead of this authority, which the Host/Origin fence refuses.
     res.writeHead(200, {
       'cache-control': 'no-store',
       'content-type': 'text/html; charset=utf-8',
-      'referrer-policy': 'no-referrer',
       'x-frame-options': 'DENY',
     })
     res.end(PAIRING_PAGE)
