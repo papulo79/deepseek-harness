@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Pablo=20De=20Andr=C3=A9s?= <pdeandres35@gmail.com>
 Date: Sun, 13 Sep 2026 15:21:23 +0200
-Subject: [PATCH 2/5] fix(web): close the LAN pairing contract gaps found in
+Subject: [PATCH 2/6] fix(web): close the LAN pairing contract gaps found in
  review
 
 Enforce the `application/x-www-form-urlencoded` media type the README and the

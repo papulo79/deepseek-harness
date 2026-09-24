@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Pablo=20De=20Andr=C3=A9s?= <pdeandres35@gmail.com>
 Date: Sun, 13 Sep 2026 15:43:26 +0200
-Subject: [PATCH 4/5] feat(web): pair only private LAN addresses and close the
+Subject: [PATCH 4/6] feat(web): pair only private LAN addresses and close the
  review polish
 
 Keep the pairing form off a globally routable interface: the bundle derives
