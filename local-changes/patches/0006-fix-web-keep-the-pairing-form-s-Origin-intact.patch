@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Pablo=20De=20Andr=C3=A9s?= <pdeandres35@gmail.com>
+Date: Thu, 24 Sep 2026 07:35:25 +0200
+Subject: [PATCH 6/6] fix(web): keep the pairing form's Origin intact
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The pairing page was served with `Referrer-Policy: no-referrer`. For a form
+POST the browser then sends the literal `Origin: null` instead of this
+authority (MDN: Referrer-Policy, "Effect on the Origin header"), and the
+Host/Origin fence refuses an unserializable Origin — so no pairing was
+possible. Firefox on Android never got past a 403 `forbidden`.
+
+The page's only request is its own form, so there is no referrer to protect:
+the header goes away and a regression test pins its absence.
+---
+ packages/client/connection/src/browser-auth.ts             | 4 +++-
+ packages/client/connection/tests/browser-auth.host.spec.ts | 4 +++-
+ 2 files changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/packages/client/connection/src/browser-auth.ts b/packages/client/connection/src/browser-auth.ts
+index 7170b457f4..10b7f69e07 100644
+--- a/packages/client/connection/src/browser-auth.ts
++++ b/packages/client/connection/src/browser-auth.ts
+@@ -475,10 +475,12 @@ export class BrowserAuth {
+   }
+ 
+   private writePairingPage(res: ConnectionIndexResponse): void {
++    // No referrer policy: this page's only request is the form's own POST, and
++    // under `no-referrer` browsers send that POST with the literal `Origin:
++    // null` instead of this authority, which the Host/Origin fence refuses.
+     res.writeHead(200, {
+       'cache-control': 'no-store',
+       'content-type': 'text/html; charset=utf-8',
+-      'referrer-policy': 'no-referrer',
+       'x-frame-options': 'DENY',
+     })
+     res.end(PAIRING_PAGE)
+diff --git a/packages/client/connection/tests/browser-auth.host.spec.ts b/packages/client/connection/tests/browser-auth.host.spec.ts
+index ffee97b3a0..7c2504a40d 100644
+--- a/packages/client/connection/tests/browser-auth.host.spec.ts
++++ b/packages/client/connection/tests/browser-auth.host.spec.ts
+@@ -283,10 +283,12 @@ describe('BrowserAuth', () => {
+       headers: {
+         'cache-control': 'no-store',
+         'content-type': 'text/html; charset=utf-8',
+-        'referrer-policy': 'no-referrer',
+         'x-frame-options': 'DENY',
+       },
+     })
++    // A `no-referrer` policy would make the form's POST carry `Origin: null`,
++    // which the Host/Origin fence refuses.
++    expect(page.state.headers?.['referrer-policy']).toBeUndefined()
+     expect(page.state.body).toContain('<form method="post" action="/pair">')
+     expect(page.state.body).toContain('name="pin"')
+     expect(page.state.body).not.toContain(pairing!.pin)

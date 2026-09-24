@@ -283,10 +283,12 @@ describe('BrowserAuth', () => {
       headers: {
         'cache-control': 'no-store',
         'content-type': 'text/html; charset=utf-8',
-        'referrer-policy': 'no-referrer',
         'x-frame-options': 'DENY',
       },
     })
+    // A `no-referrer` policy would make the form's POST carry `Origin: null`,
+    // which the Host/Origin fence refuses.
+    expect(page.state.headers?.['referrer-policy']).toBeUndefined()
     expect(page.state.body).toContain('<form method="post" action="/pair">')
     expect(page.state.body).toContain('name="pin"')
     expect(page.state.body).not.toContain(pairing!.pin)
