@@ -7,6 +7,8 @@
 # - Nunca aplica el parche sobre master, que se mantiene como espejo de upstream.
 # - Recompila solo cuando cambian las fuentes, el lockfile o el commit de git.
 # - Evita arrancar un segundo `dsh web` sobre el mismo $DSH_HOME (bloqueo de sesión).
+# - Deduce la raíz del repositorio de su propia ubicación; --repo y DSH_REPO la
+#   sobrescriben para apuntar a otro checkout.
 # - Lanza `dsh web --host 0.0.0.0 --port <puerto>`, que imprime la URL LAN y el PIN.
 #
 # Origen: copia versionada en el repo del lanzador que vivía suelto en
@@ -16,7 +18,17 @@
 set -euo pipefail
 
 DIR_SCRIPT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO="${DSH_REPO:-/home/reverendo/Desarrollo/deepseek-harness}"
+
+# La raíz se deduce de dónde vive el script —dentro del repo, en local-changes/—
+# para que el lanzador sirva en cualquier máquina sin pasar --repo. La copia
+# instalada fuera del repositorio no puede deducirla y conserva la ruta conocida
+# como último recurso.
+REPO_CONOCIDO="/home/reverendo/Desarrollo/deepseek-harness"
+REPO_DEDUCIDO="$(git -C "$DIR_SCRIPT" rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "$REPO_DEDUCIDO" ] || [ ! -f "$REPO_DEDUCIDO/local-changes/arrancar-web.sh" ]; then
+  REPO_DEDUCIDO="$REPO_CONOCIDO"
+fi
+REPO="${DSH_REPO:-$REPO_DEDUCIDO}"
 BRANCH="${BRANCH:-local/custom}"
 UPSTREAM="${UPSTREAM:-upstream}"
 UPSTREAM_BRANCH="${UPSTREAM_BRANCH:-master}"
@@ -45,7 +57,8 @@ Arranca DeepSeek Harness en modo red local (móvil) desde esta copia del repo.
 Opciones:
   -p, --puerto N     puerto de escucha (por defecto 3081)
       --host H       interfaz de escucha (por defecto 0.0.0.0)
-      --repo RUTA    raíz del repositorio (por defecto $DSH_REPO o la ruta conocida)
+      --repo RUTA    raíz del repositorio (por defecto $DSH_REPO, la raíz donde
+                     vive este script, o la ruta conocida)
       --abrir        abre también el navegador del ordenador (omite --no-open)
       --sin-build    no comprueba ni ejecuta la compilación
       --solo-build   compila si hace falta y termina, sin arrancar el servicio
@@ -78,7 +91,9 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-if [ ! -d "$REPO/.git" ]; then
+# `-e` y no `-d`: en un worktree `.git` es un fichero que apunta al repositorio
+# principal, y el lanzador funciona igual desde ahí.
+if [ ! -e "$REPO/.git" ]; then
   error "no encuentro un repositorio git en $REPO (usa --repo o DSH_REPO)"
   exit 1
 fi

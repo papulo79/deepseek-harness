@@ -173,8 +173,11 @@ También puedes ejecutarlo directamente desde el repositorio, sin instalar nada:
 ```
 
 En ese caso la huella de compilación vive en `$REPO/.artifacts/`, que git
-ignora, así que no ensucia el árbol. `DSH_REPO` o `--repo` apuntan a otro
-checkout, y `DSH_SELLO` a otra huella.
+ignora, así que no ensucia el árbol. El lanzador deduce la raíz del repositorio
+de su propia ubicación, así que sirve en cualquier máquina y con cualquier ruta
+de clonado; `DSH_REPO` o `--repo` solo hacen falta para apuntar a otro checkout,
+y `DSH_SELLO` para elegir otra huella. La copia instalada fuera del repositorio
+no puede deducirla y cae en la ruta conocida.
 
 En cada arranque consulta `upstream` y `origin` y avisa —sin bloquear nada— de
 los commits nuevos de upstream (toca rebasar), de los que tengas sin publicar y
